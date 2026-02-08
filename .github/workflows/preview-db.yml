@@ -1,4 +1,4 @@
-name: Preview DB Branching
+name: Postgres Preview Branch (Internal)
 
 on:
   pull_request:
@@ -12,14 +12,14 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  create-preview-db:
+  create-preview-branch-db:
     if: github.event.action != 'closed'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Create preview DB (idempotent)
+      - name: Create Preview Branch DB (idempotent)
         uses: ./
         with:
           mode: create
@@ -33,14 +33,14 @@ jobs:
           pg_password: ${{ secrets.PGPASSWORD }}
           pg_database: ${{ vars.PGDATABASE || 'postgres' }}
 
-  drop-preview-db:
+  drop-preview-branch-db:
     if: github.event.action == 'closed'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Drop preview DB
+      - name: Drop Preview Branch DB
         uses: ./
         with:
           mode: drop

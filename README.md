@@ -12,10 +12,18 @@ Reusable GitHub Action to create/drop PostgreSQL preview databases per pull requ
 
 This avoids `CREATE DATABASE ... TEMPLATE` lock limitations when the source DB has active connections.
 
-## Use From Other Repositories (Action)
+## Recommended Consumption Model
+
+Use this repository as a dedicated reusable action and call it with short syntax:
+
+`uses: Eiley2/db-preview-branching@<ref>`
+
+That keeps callers simple and avoids the longer reusable-workflow path syntax.
+
+## Use From Other Repositories (Short Action Syntax)
 
 ```yaml
-name: Preview DB
+name: Preview Branch DB
 
 on:
   pull_request:
@@ -28,7 +36,7 @@ jobs:
   preview-db:
     runs-on: ubuntu-latest
     steps:
-      - name: Create/Drop preview DB
+      - name: Create/Drop preview branch DB
         uses: Eiley2/db-preview-branching@main
         with:
           mode: ${{ github.event.action == 'closed' && 'drop' || 'create' }}
@@ -42,9 +50,9 @@ jobs:
           pg_database: postgres
 ```
 
-## Use From Other Repositories (Reusable Workflow)
+## Optional: Use As Reusable Workflow
 
-Call this reusable workflow:
+If you still want centralized orchestration by workflow:
 
 `Eiley2/db-preview-branching/.github/workflows/preview-db-reusable.yml@main`
 

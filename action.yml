@@ -1,9 +1,9 @@
-name: "Postgres Preview DB"
-description: "Create or drop per-PR preview databases in PostgreSQL"
+name: "Postgres Preview Branch Manager"
+description: "Create or drop per-PR preview branch databases in PostgreSQL"
 
 inputs:
   mode:
-    description: "Operation mode: create or drop"
+    description: "Operation mode: create or drop preview database"
     required: true
   base_db:
     description: "Base database logical name used in lock key and default naming"

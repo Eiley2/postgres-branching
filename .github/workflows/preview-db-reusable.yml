@@ -1,4 +1,4 @@
-name: Preview DB Reusable
+name: Postgres Preview Branch (Reusable Workflow)
 
 on:
   workflow_call:
@@ -57,7 +57,7 @@ permissions:
   contents: read
 
 jobs:
-  preview-db:
+  manage-preview-branch-db:
     runs-on: ubuntu-latest
     outputs:
       mode: ${{ steps.resolve-mode.outputs.mode }}
@@ -88,7 +88,7 @@ jobs:
           path: .preview-db-action
           persist-credentials: false
 
-      - name: Run preview DB action
+      - name: Run Preview Branch Action
         id: run-action
         if: steps.resolve-mode.outputs.mode != 'skip'
         uses: ./.preview-db-action

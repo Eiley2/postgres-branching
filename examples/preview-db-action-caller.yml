@@ -1,0 +1,25 @@
+name: Preview Branch DB Caller (Short Action)
+
+on:
+  pull_request:
+    types: [opened, reopened, synchronize, closed]
+
+permissions:
+  contents: read
+
+jobs:
+  preview-branch-db:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Create/Drop Preview Branch DB
+        uses: Eiley2/db-preview-branching@main
+        with:
+          mode: ${{ github.event.action == 'closed' && 'drop' || 'create' }}
+          base_db: geopark
+          pr_number: ${{ github.event.number }}
+          source_db: geopark
+          pg_host: ${{ secrets.PGHOST }}
+          pg_port: "5432"
+          pg_user: ${{ secrets.PGUSER }}
+          pg_password: ${{ secrets.PGPASSWORD }}
+          pg_database: postgres
