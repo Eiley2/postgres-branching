@@ -18,13 +18,6 @@ require_env() {
   fi
 }
 
-require_command() {
-  local cmd="$1"
-  if ! command -v "${cmd}" >/dev/null 2>&1; then
-    die "Required command not found: ${cmd}"
-  fi
-}
-
 validate_identifier() {
   local value="$1"
   local label="$2"
@@ -79,7 +72,7 @@ clone_from_active_source() {
       --exit-on-error
 }
 
-ensure_preview_db() {
+create_preview_db() {
   local setup_output
   setup_output="$(
     psql_admin \
@@ -111,6 +104,12 @@ SQL
   printf '%s\n' "${setup_output}"
 
   if printf '%s\n' "${setup_output}" | grep -q 'PREVIEW_CREATED=1'; then
+    if ! command -v pg_dump >/dev/null 2>&1 || ! command -v pg_restore >/dev/null 2>&1; then
+      log "Missing pg_dump/pg_restore. Cleaning up incomplete preview DB ${PREVIEW_DB}."
+      drop_preview_db || true
+      die "Required commands not found: pg_dump and pg_restore."
+    fi
+
     if ! clone_from_active_source; then
       log "Clone failed. Cleaning up incomplete preview DB ${PREVIEW_DB}."
       drop_preview_db || true
@@ -151,29 +150,10 @@ SELECT pg_advisory_unlock(hashtext(:'base_db'), :'pr_number'::integer);
 SQL
 }
 
-validate_preview_db_exists() {
-  psql_admin \
-    -v base_db="${BASE_DB}" \
-    -v pr_number="${PR_NUMBER}" \
-    -v preview_db="${PREVIEW_DB}" <<'SQL'
-SELECT pg_advisory_lock(hashtext(:'base_db'), :'pr_number'::integer);
-
-SELECT EXISTS(SELECT 1 FROM pg_database WHERE datname = :'preview_db') AS preview_exists \gset
-\if :preview_exists
-  \echo [preview-db] Preview DB exists.
-\else
-  \echo [preview-db] ERROR: Preview DB does not exist.
-  SELECT 1/0;
-\endif
-
-SELECT pg_advisory_unlock(hashtext(:'base_db'), :'pr_number'::integer);
-SQL
-}
-
 main() {
   local command="${1:-}"
   if [[ -z "$command" ]]; then
-    die "Usage: $0 <ensure|exists|drop>"
+    die "Usage: $0 <create|drop>"
   fi
 
   require_env "BASE_DB"
@@ -193,19 +173,14 @@ main() {
   validate_identifier "${PREVIEW_DB}" "PREVIEW_DB"
 
   case "$command" in
-    ensure)
-      require_command "pg_dump"
-      require_command "pg_restore"
-      ensure_preview_db
-      ;;
-    exists)
-      validate_preview_db_exists
+    create)
+      create_preview_db
       ;;
     drop)
       drop_preview_db
       ;;
     *)
-      die "Invalid command '${command}'. Use ensure, exists or drop."
+      die "Invalid command '${command}'. Use create or drop."
       ;;
   esac
 }

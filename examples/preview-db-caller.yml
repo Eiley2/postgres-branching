@@ -1,0 +1,24 @@
+name: Preview DB Caller Example
+
+on:
+  pull_request:
+    types: [opened, reopened, synchronize, closed]
+
+permissions:
+  contents: read
+
+jobs:
+  preview-db:
+    uses: Eiley2/db-preview-branching/.github/workflows/preview-db-reusable.yml@main
+    with:
+      event_action: ${{ github.event.action }}
+      base_db: geopark
+      pr_number: ${{ github.event.number }}
+      source_db: geopark
+      pg_port: "5432"
+      pg_database: postgres
+      action_ref: main
+    secrets:
+      pg_host: ${{ secrets.PGHOST }}
+      pg_user: ${{ secrets.PGUSER }}
+      pg_password: ${{ secrets.PGPASSWORD }}

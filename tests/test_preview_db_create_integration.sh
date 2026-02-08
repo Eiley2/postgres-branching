@@ -14,8 +14,8 @@ main() {
   trap stop_source_connections EXIT
   start_source_connections "${SOURCE_CONN_COUNT}" "${SOURCE_CONN_SLEEP_SECONDS}"
 
-  info "Running ensure for preview DB ${PREVIEW_DB} (source=${SOURCE_DB})"
-  "${SCRIPT_PATH}" ensure
+  info "Running create for preview DB ${PREVIEW_DB} (source=${SOURCE_DB})"
+  "${SCRIPT_PATH}" create
 
   assert_db_exists "${PREVIEW_DB}" "t"
   stop_source_connections

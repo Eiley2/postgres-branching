@@ -1,0 +1,105 @@
+name: Preview DB Reusable
+
+on:
+  workflow_call:
+    inputs:
+      event_action:
+        description: "pull_request action (opened, reopened, synchronize, closed)"
+        required: true
+        type: string
+      base_db:
+        description: "Base DB name"
+        required: true
+        type: string
+      pr_number:
+        description: "Pull request number"
+        required: true
+        type: string
+      source_db:
+        description: "Source DB to clone from"
+        required: false
+        default: ""
+        type: string
+      app_db_user:
+        description: "Optional role to grant on preview DB"
+        required: false
+        default: ""
+        type: string
+      pg_port:
+        description: "PostgreSQL port"
+        required: false
+        default: "5432"
+        type: string
+      pg_database:
+        description: "Administrative DB for control operations"
+        required: false
+        default: "postgres"
+        type: string
+      action_repository:
+        description: "Repository that contains the preview DB action"
+        required: false
+        default: "Eiley2/db-preview-branching"
+        type: string
+      action_ref:
+        description: "Git ref (tag/SHA/branch) to checkout for the action"
+        required: false
+        default: "main"
+        type: string
+    secrets:
+      pg_host:
+        required: true
+      pg_user:
+        required: true
+      pg_password:
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  preview-db:
+    runs-on: ubuntu-latest
+    outputs:
+      mode: ${{ steps.resolve-mode.outputs.mode }}
+      preview_db: ${{ steps.run-action.outputs.preview_db }}
+    steps:
+      - name: Resolve mode
+        id: resolve-mode
+        shell: bash
+        run: |
+          case "${{ inputs.event_action }}" in
+            opened|reopened|synchronize)
+              echo "mode=create" >> "$GITHUB_OUTPUT"
+              ;;
+            closed)
+              echo "mode=drop" >> "$GITHUB_OUTPUT"
+              ;;
+            *)
+              echo "mode=skip" >> "$GITHUB_OUTPUT"
+              ;;
+          esac
+
+      - name: Checkout action repository
+        if: steps.resolve-mode.outputs.mode != 'skip'
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ inputs.action_repository }}
+          ref: ${{ inputs.action_ref }}
+          path: .preview-db-action
+          persist-credentials: false
+
+      - name: Run preview DB action
+        id: run-action
+        if: steps.resolve-mode.outputs.mode != 'skip'
+        uses: ./.preview-db-action
+        with:
+          mode: ${{ steps.resolve-mode.outputs.mode }}
+          base_db: ${{ inputs.base_db }}
+          pr_number: ${{ inputs.pr_number }}
+          source_db: ${{ inputs.source_db || inputs.base_db }}
+          app_db_user: ${{ inputs.app_db_user }}
+          pg_host: ${{ secrets.pg_host }}
+          pg_port: ${{ inputs.pg_port }}
+          pg_user: ${{ secrets.pg_user }}
+          pg_password: ${{ secrets.pg_password }}
+          pg_database: ${{ inputs.pg_database }}

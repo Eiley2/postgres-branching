@@ -82,6 +82,7 @@ setup_mock_psql() {
   mkdir -p "${MOCK_BIN_DIR}" "${MOCK_STDIN_DIR}"
   mkdir -p "${MOCK_LOG_DIR}"
   printf '0\n' > "${MOCK_COUNTER_FILE}"
+  MOCK_PSQL_STDOUT=""
   debug "mock psql temp dir: ${TEST_TMP_DIR}"
 
   cat > "${MOCK_BIN_DIR}/psql" <<'EOF'
@@ -153,21 +154,33 @@ run_script() {
   "${SCRIPT_PATH}" "${command}" >/dev/null 2>&1
 }
 
-test_ensure_holds_lock_in_single_session() {
+test_create_holds_lock_in_single_session() {
   setup_mock_psql
   setup_mock_dump_restore
   MOCK_PSQL_STDOUT="PREVIEW_CREATED=1"
-  run_script ensure
+  run_script create
 
-  assert_eq "1" "$(cat "${MOCK_COUNTER_FILE}")" "ensure should use one psql session"
+  assert_eq "1" "$(cat "${MOCK_COUNTER_FILE}")" "create should use one psql session"
   local sql_file="${MOCK_STDIN_DIR}/call_1.sql"
-  assert_contains "pg_advisory_lock" "${sql_file}" "ensure should acquire advisory lock"
-  assert_contains "CREATE DATABASE" "${sql_file}" "ensure should create preview database shell"
-  assert_contains "pg_advisory_unlock" "${sql_file}" "ensure should release advisory lock"
-  assert_line_order "pg_advisory_lock" "CREATE DATABASE" "${sql_file}" "ensure lock before create"
-  assert_line_order "CREATE DATABASE" "pg_advisory_unlock" "${sql_file}" "ensure unlock after create"
-  assert_contains "-d geopark" "${MOCK_LOG_DIR}/pg_dump.args" "ensure should dump from source db"
-  assert_contains "-d geopark_pr_12" "${MOCK_LOG_DIR}/pg_restore.args" "ensure should restore into preview db"
+  assert_contains "pg_advisory_lock" "${sql_file}" "create should acquire advisory lock"
+  assert_contains "CREATE DATABASE" "${sql_file}" "create should create preview database shell"
+  assert_contains "pg_advisory_unlock" "${sql_file}" "create should release advisory lock"
+  assert_line_order "pg_advisory_lock" "CREATE DATABASE" "${sql_file}" "create lock before create"
+  assert_line_order "CREATE DATABASE" "pg_advisory_unlock" "${sql_file}" "create unlock after create"
+  assert_contains "-d geopark" "${MOCK_LOG_DIR}/pg_dump.args" "create should dump from source db"
+  assert_contains "-d geopark_pr_12" "${MOCK_LOG_DIR}/pg_restore.args" "create should restore into preview db"
+}
+
+test_create_is_noop_when_preview_exists() {
+  setup_mock_psql
+  setup_mock_dump_restore
+  run_script create
+
+  assert_eq "1" "$(cat "${MOCK_COUNTER_FILE}")" "create noop should use one psql session"
+  local sql_file="${MOCK_STDIN_DIR}/call_1.sql"
+  assert_contains "SELECT EXISTS(SELECT 1 FROM pg_database WHERE datname = :'preview_db')" "${sql_file}" "create noop should check preview db presence"
+  assert_not_exists_file "${MOCK_LOG_DIR}/pg_dump.args" "create noop should not run pg_dump"
+  assert_not_exists_file "${MOCK_LOG_DIR}/pg_restore.args" "create noop should not run pg_restore"
 }
 
 test_drop_holds_lock_in_single_session() {
@@ -184,20 +197,6 @@ test_drop_holds_lock_in_single_session() {
   assert_line_order "DROP DATABASE IF EXISTS" "pg_advisory_unlock" "${sql_file}" "drop unlock after drop"
 }
 
-test_exists_only_checks_presence() {
-  setup_mock_psql
-  setup_mock_dump_restore
-  run_script exists
-
-  assert_eq "1" "$(cat "${MOCK_COUNTER_FILE}")" "exists should use one psql session"
-  local sql_file="${MOCK_STDIN_DIR}/call_1.sql"
-  assert_contains "pg_advisory_lock" "${sql_file}" "exists should acquire advisory lock"
-  assert_contains "SELECT EXISTS(SELECT 1 FROM pg_database WHERE datname = :'preview_db')" "${sql_file}" "exists should check preview db presence"
-  assert_contains "pg_advisory_unlock" "${sql_file}" "exists should release advisory lock"
-  assert_not_exists_file "${MOCK_LOG_DIR}/pg_dump.args" "exists should not run pg_dump"
-  assert_not_exists_file "${MOCK_LOG_DIR}/pg_restore.args" "exists should not run pg_restore"
-}
-
 test_missing_env_fails_before_psql() {
   setup_mock_psql
   setup_mock_dump_restore
@@ -211,7 +210,7 @@ test_missing_env_fails_before_psql() {
   PGPORT="5432" \
   PGUSER="postgres" \
   PGPASSWORD="postgres" \
-  "${SCRIPT_PATH}" ensure >/dev/null 2>&1
+  "${SCRIPT_PATH}" create >/dev/null 2>&1
   exit_code="$?"
   set -e
 
@@ -223,8 +222,8 @@ test_missing_env_fails_before_psql() {
 }
 
 main() {
-  run_test test_ensure_holds_lock_in_single_session
-  run_test test_exists_only_checks_presence
+  run_test test_create_holds_lock_in_single_session
+  run_test test_create_is_noop_when_preview_exists
   run_test test_drop_holds_lock_in_single_session
   run_test test_missing_env_fails_before_psql
   info 'PASS all preview-db tests passed'

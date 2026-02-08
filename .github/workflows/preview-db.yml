@@ -12,48 +12,26 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  ensure-preview-db:
-    if: github.event.action == 'opened' || github.event.action == 'reopened'
+  create-preview-db:
+    if: github.event.action != 'closed'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Ensure preview DB
-        env:
-          BASE_DB: ${{ vars.BASE_DB }}
-          PR_NUMBER: ${{ github.event.number }}
-          SOURCE_DB: ${{ vars.SOURCE_DB || vars.BASE_DB }}
-          APP_DB_USER: ${{ vars.APP_DB_USER }}
-          PGHOST: ${{ secrets.PGHOST }}
-          PGPORT: ${{ secrets.PGPORT }}
-          PGUSER: ${{ secrets.PGUSER }}
-          PGPASSWORD: ${{ secrets.PGPASSWORD }}
-          PGDATABASE: ${{ vars.PGDATABASE }}
-        run: |
-          chmod +x scripts/preview-db.sh
-          scripts/preview-db.sh ensure
-
-  validate-preview-db:
-    if: github.event.action == 'synchronize'
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Validate preview DB exists
-        env:
-          BASE_DB: ${{ vars.BASE_DB }}
-          PR_NUMBER: ${{ github.event.number }}
-          SOURCE_DB: ${{ vars.SOURCE_DB || vars.BASE_DB }}
-          PGHOST: ${{ secrets.PGHOST }}
-          PGPORT: ${{ secrets.PGPORT }}
-          PGUSER: ${{ secrets.PGUSER }}
-          PGPASSWORD: ${{ secrets.PGPASSWORD }}
-          PGDATABASE: ${{ vars.PGDATABASE }}
-        run: |
-          chmod +x scripts/preview-db.sh
-          scripts/preview-db.sh exists
+      - name: Create preview DB (idempotent)
+        uses: ./
+        with:
+          mode: create
+          base_db: ${{ vars.BASE_DB }}
+          pr_number: ${{ github.event.number }}
+          source_db: ${{ vars.SOURCE_DB || vars.BASE_DB }}
+          app_db_user: ${{ vars.APP_DB_USER }}
+          pg_host: ${{ secrets.PGHOST }}
+          pg_port: ${{ secrets.PGPORT }}
+          pg_user: ${{ secrets.PGUSER }}
+          pg_password: ${{ secrets.PGPASSWORD }}
+          pg_database: ${{ vars.PGDATABASE || 'postgres' }}
 
   drop-preview-db:
     if: github.event.action == 'closed'
@@ -63,15 +41,14 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Drop preview DB
-        env:
-          BASE_DB: ${{ vars.BASE_DB }}
-          PR_NUMBER: ${{ github.event.number }}
-          SOURCE_DB: ${{ vars.SOURCE_DB || vars.BASE_DB }}
-          PGHOST: ${{ secrets.PGHOST }}
-          PGPORT: ${{ secrets.PGPORT }}
-          PGUSER: ${{ secrets.PGUSER }}
-          PGPASSWORD: ${{ secrets.PGPASSWORD }}
-          PGDATABASE: ${{ vars.PGDATABASE }}
-        run: |
-          chmod +x scripts/preview-db.sh
-          scripts/preview-db.sh drop
+        uses: ./
+        with:
+          mode: drop
+          base_db: ${{ vars.BASE_DB }}
+          pr_number: ${{ github.event.number }}
+          source_db: ${{ vars.SOURCE_DB || vars.BASE_DB }}
+          pg_host: ${{ secrets.PGHOST }}
+          pg_port: ${{ secrets.PGPORT }}
+          pg_user: ${{ secrets.PGUSER }}
+          pg_password: ${{ secrets.PGPASSWORD }}
+          pg_database: ${{ vars.PGDATABASE || 'postgres' }}

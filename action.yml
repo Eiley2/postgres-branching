@@ -1,0 +1,70 @@
+name: "Postgres Preview DB"
+description: "Create or drop per-PR preview databases in PostgreSQL"
+
+inputs:
+  mode:
+    description: "Operation mode: create or drop"
+    required: true
+  base_db:
+    description: "Base database logical name used in lock key and default naming"
+    required: true
+  pr_number:
+    description: "Pull request number"
+    required: true
+  source_db:
+    description: "Source database to clone from (defaults to base_db)"
+    required: false
+    default: ""
+  preview_db:
+    description: "Explicit preview database name (defaults to <base_db>_pr_<pr_number>)"
+    required: false
+    default: ""
+  app_db_user:
+    description: "Optional DB role to grant privileges on preview DB"
+    required: false
+    default: ""
+  pg_host:
+    description: "PostgreSQL host"
+    required: true
+  pg_port:
+    description: "PostgreSQL port"
+    required: true
+  pg_user:
+    description: "PostgreSQL user"
+    required: true
+  pg_password:
+    description: "PostgreSQL password"
+    required: true
+  pg_database:
+    description: "Administrative database for control operations"
+    required: false
+    default: "postgres"
+
+outputs:
+  preview_db:
+    description: "Resolved preview DB name"
+    value: ${{ steps.run.outputs.preview_db }}
+
+runs:
+  using: "composite"
+  steps:
+    - id: run
+      shell: bash
+      env:
+        BASE_DB: ${{ inputs.base_db }}
+        PR_NUMBER: ${{ inputs.pr_number }}
+        SOURCE_DB: ${{ inputs.source_db }}
+        PREVIEW_DB: ${{ inputs.preview_db }}
+        APP_DB_USER: ${{ inputs.app_db_user }}
+        PGHOST: ${{ inputs.pg_host }}
+        PGPORT: ${{ inputs.pg_port }}
+        PGUSER: ${{ inputs.pg_user }}
+        PGPASSWORD: ${{ inputs.pg_password }}
+        PGDATABASE: ${{ inputs.pg_database }}
+      run: |
+        set -euo pipefail
+        chmod +x "$GITHUB_ACTION_PATH/scripts/preview-db.sh"
+        "$GITHUB_ACTION_PATH/scripts/preview-db.sh" "${{ inputs.mode }}"
+
+        resolved_preview_db="${PREVIEW_DB:-${BASE_DB}_pr_${PR_NUMBER}}"
+        echo "preview_db=${resolved_preview_db}" >> "$GITHUB_OUTPUT"
