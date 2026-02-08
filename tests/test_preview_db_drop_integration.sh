@@ -11,12 +11,11 @@ main() {
   require_common_env
   compute_names
 
-  printf 'Running drop for preview DB %s\n' "${PREVIEW_DB}"
+  info "Running drop for preview DB ${PREVIEW_DB}"
   "${SCRIPT_PATH}" drop
 
   assert_db_exists "${PREVIEW_DB}" "f"
-  printf 'PASS: preview DB removed (%s)\n' "${PREVIEW_DB}"
+  info "PASS preview DB removed (${PREVIEW_DB})"
 }
 
 main "$@"
-

@@ -13,10 +13,8 @@ concurrency:
 
 jobs:
   ensure-preview-db:
-    if: github.event.action != 'closed'
+    if: github.event.action == 'opened' || github.event.action == 'reopened'
     runs-on: ubuntu-latest
-    outputs:
-      preview_db: ${{ steps.meta.outputs.preview_db }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -25,7 +23,7 @@ jobs:
         env:
           BASE_DB: ${{ vars.BASE_DB }}
           PR_NUMBER: ${{ github.event.number }}
-          SOURCE_DB: ${{ vars.SOURCE_DB || vars.TEMPLATE_DB || vars.BASE_DB }}
+          SOURCE_DB: ${{ vars.SOURCE_DB || vars.BASE_DB }}
           APP_DB_USER: ${{ vars.APP_DB_USER }}
           PGHOST: ${{ secrets.PGHOST }}
           PGPORT: ${{ secrets.PGPORT }}
@@ -36,13 +34,26 @@ jobs:
           chmod +x scripts/preview-db.sh
           scripts/preview-db.sh ensure
 
-      - name: Export metadata
-        id: meta
+  validate-preview-db:
+    if: github.event.action == 'synchronize'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Validate preview DB exists
         env:
           BASE_DB: ${{ vars.BASE_DB }}
           PR_NUMBER: ${{ github.event.number }}
+          SOURCE_DB: ${{ vars.SOURCE_DB || vars.BASE_DB }}
+          PGHOST: ${{ secrets.PGHOST }}
+          PGPORT: ${{ secrets.PGPORT }}
+          PGUSER: ${{ secrets.PGUSER }}
+          PGPASSWORD: ${{ secrets.PGPASSWORD }}
+          PGDATABASE: ${{ vars.PGDATABASE }}
         run: |
-          echo "preview_db=${BASE_DB}_pr_${PR_NUMBER}" >> "$GITHUB_OUTPUT"
+          chmod +x scripts/preview-db.sh
+          scripts/preview-db.sh exists
 
   drop-preview-db:
     if: github.event.action == 'closed'
@@ -55,7 +66,7 @@ jobs:
         env:
           BASE_DB: ${{ vars.BASE_DB }}
           PR_NUMBER: ${{ github.event.number }}
-          SOURCE_DB: ${{ vars.SOURCE_DB || vars.TEMPLATE_DB || vars.BASE_DB }}
+          SOURCE_DB: ${{ vars.SOURCE_DB || vars.BASE_DB }}
           PGHOST: ${{ secrets.PGHOST }}
           PGPORT: ${{ secrets.PGPORT }}
           PGUSER: ${{ secrets.PGUSER }}

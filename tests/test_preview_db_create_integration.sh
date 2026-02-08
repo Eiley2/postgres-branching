@@ -11,11 +11,16 @@ main() {
   require_common_env
   compute_names
 
-  printf 'Running ensure for preview DB %s (source=%s)\n' "${PREVIEW_DB}" "${SOURCE_DB}"
+  trap stop_source_connections EXIT
+  start_source_connections "${SOURCE_CONN_COUNT}" "${SOURCE_CONN_SLEEP_SECONDS}"
+
+  info "Running ensure for preview DB ${PREVIEW_DB} (source=${SOURCE_DB})"
   "${SCRIPT_PATH}" ensure
 
   assert_db_exists "${PREVIEW_DB}" "t"
-  printf 'PASS: preview DB created (%s)\n' "${PREVIEW_DB}"
+  stop_source_connections
+  trap - EXIT
+  info "PASS preview DB created (${PREVIEW_DB})"
 }
 
 main "$@"

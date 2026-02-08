@@ -18,6 +18,13 @@ require_env() {
   fi
 }
 
+require_command() {
+  local cmd="$1"
+  if ! command -v "${cmd}" >/dev/null 2>&1; then
+    die "Required command not found: ${cmd}"
+  fi
+}
+
 validate_identifier() {
   local value="$1"
   local label="$2"
@@ -42,6 +49,7 @@ psql_admin() {
   PGPASSWORD="${PGPASSWORD}" psql \
     -v ON_ERROR_STOP=1 \
     -X \
+    -q \
     -h "${PGHOST}" \
     -p "${PGPORT}" \
     -U "${PGUSER}" \
@@ -49,8 +57,32 @@ psql_admin() {
     "$@"
 }
 
+clone_from_active_source() {
+  log "Cloning data from ${SOURCE_DB} into ${PREVIEW_DB} with pg_dump/pg_restore."
+  PGPASSWORD="${PGPASSWORD}" pg_dump \
+    -h "${PGHOST}" \
+    -p "${PGPORT}" \
+    -U "${PGUSER}" \
+    -d "${SOURCE_DB}" \
+    --format=custom \
+    --no-owner \
+    --no-acl \
+    | PGPASSWORD="${PGPASSWORD}" pg_restore \
+      -h "${PGHOST}" \
+      -p "${PGPORT}" \
+      -U "${PGUSER}" \
+      -d "${PREVIEW_DB}" \
+      --no-owner \
+      --no-acl \
+      --clean \
+      --if-exists \
+      --exit-on-error
+}
+
 ensure_preview_db() {
-  psql_admin \
+  local setup_output
+  setup_output="$(
+    psql_admin \
     -v base_db="${BASE_DB}" \
     -v pr_number="${PR_NUMBER}" \
     -v preview_db="${PREVIEW_DB}" \
@@ -63,9 +95,10 @@ SELECT EXISTS(SELECT 1 FROM pg_database WHERE datname = :'preview_db') AS previe
 \else
   SELECT EXISTS(SELECT 1 FROM pg_database WHERE datname = :'source_db') AS source_exists \gset
   \if :source_exists
-    SELECT format('CREATE DATABASE %I WITH TEMPLATE %I;', :'preview_db', :'source_db') AS create_sql \gset
+    SELECT format('CREATE DATABASE %I;', :'preview_db') AS create_sql \gset
     :create_sql
-    \echo [preview-db] Preview DB created.
+    \echo PREVIEW_CREATED=1
+    \echo [preview-db] Preview DB shell created.
   \else
     \echo [preview-db] ERROR: Source DB :source_db does not exist.
     SELECT 1/0;
@@ -74,6 +107,17 @@ SELECT EXISTS(SELECT 1 FROM pg_database WHERE datname = :'preview_db') AS previe
 
 SELECT pg_advisory_unlock(hashtext(:'base_db'), :'pr_number'::integer);
 SQL
+  )"
+  printf '%s\n' "${setup_output}"
+
+  if printf '%s\n' "${setup_output}" | grep -q 'PREVIEW_CREATED=1'; then
+    if ! clone_from_active_source; then
+      log "Clone failed. Cleaning up incomplete preview DB ${PREVIEW_DB}."
+      drop_preview_db || true
+      die "Failed to clone data from source DB ${SOURCE_DB}."
+    fi
+    log "Preview DB created and restored from source DB."
+  fi
 
   if [[ -n "${APP_DB_USER:-}" ]]; then
     validate_identifier "${APP_DB_USER}" "APP_DB_USER"
@@ -107,10 +151,29 @@ SELECT pg_advisory_unlock(hashtext(:'base_db'), :'pr_number'::integer);
 SQL
 }
 
+validate_preview_db_exists() {
+  psql_admin \
+    -v base_db="${BASE_DB}" \
+    -v pr_number="${PR_NUMBER}" \
+    -v preview_db="${PREVIEW_DB}" <<'SQL'
+SELECT pg_advisory_lock(hashtext(:'base_db'), :'pr_number'::integer);
+
+SELECT EXISTS(SELECT 1 FROM pg_database WHERE datname = :'preview_db') AS preview_exists \gset
+\if :preview_exists
+  \echo [preview-db] Preview DB exists.
+\else
+  \echo [preview-db] ERROR: Preview DB does not exist.
+  SELECT 1/0;
+\endif
+
+SELECT pg_advisory_unlock(hashtext(:'base_db'), :'pr_number'::integer);
+SQL
+}
+
 main() {
   local command="${1:-}"
   if [[ -z "$command" ]]; then
-    die "Usage: $0 <ensure|drop>"
+    die "Usage: $0 <ensure|exists|drop>"
   fi
 
   require_env "BASE_DB"
@@ -123,7 +186,7 @@ main() {
   validate_identifier "${BASE_DB}" "BASE_DB"
   validate_pr_number "${PR_NUMBER}"
 
-  SOURCE_DB="${SOURCE_DB:-${TEMPLATE_DB:-${BASE_DB}}}"
+  SOURCE_DB="${SOURCE_DB:-${BASE_DB}}"
   PREVIEW_DB="${PREVIEW_DB:-${BASE_DB}_pr_${PR_NUMBER}}"
 
   validate_identifier "${SOURCE_DB}" "SOURCE_DB"
@@ -131,13 +194,18 @@ main() {
 
   case "$command" in
     ensure)
+      require_command "pg_dump"
+      require_command "pg_restore"
       ensure_preview_db
+      ;;
+    exists)
+      validate_preview_db_exists
       ;;
     drop)
       drop_preview_db
       ;;
     *)
-      die "Invalid command '${command}'. Use ensure or drop."
+      die "Invalid command '${command}'. Use ensure, exists or drop."
       ;;
   esac
 }
