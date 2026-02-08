@@ -1,0 +1,66 @@
+name: Preview DB Branching
+
+on:
+  pull_request:
+    types: [opened, reopened, synchronize, closed]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: preview-db-${{ github.repository }}-${{ github.event.number }}-${{ vars.BASE_DB }}
+  cancel-in-progress: false
+
+jobs:
+  ensure-preview-db:
+    if: github.event.action != 'closed'
+    runs-on: ubuntu-latest
+    outputs:
+      preview_db: ${{ steps.meta.outputs.preview_db }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Ensure preview DB
+        env:
+          BASE_DB: ${{ vars.BASE_DB }}
+          PR_NUMBER: ${{ github.event.number }}
+          SOURCE_DB: ${{ vars.SOURCE_DB || vars.TEMPLATE_DB || vars.BASE_DB }}
+          APP_DB_USER: ${{ vars.APP_DB_USER }}
+          PGHOST: ${{ secrets.PGHOST }}
+          PGPORT: ${{ secrets.PGPORT }}
+          PGUSER: ${{ secrets.PGUSER }}
+          PGPASSWORD: ${{ secrets.PGPASSWORD }}
+          PGDATABASE: ${{ vars.PGDATABASE }}
+        run: |
+          chmod +x scripts/preview-db.sh
+          scripts/preview-db.sh ensure
+
+      - name: Export metadata
+        id: meta
+        env:
+          BASE_DB: ${{ vars.BASE_DB }}
+          PR_NUMBER: ${{ github.event.number }}
+        run: |
+          echo "preview_db=${BASE_DB}_pr_${PR_NUMBER}" >> "$GITHUB_OUTPUT"
+
+  drop-preview-db:
+    if: github.event.action == 'closed'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Drop preview DB
+        env:
+          BASE_DB: ${{ vars.BASE_DB }}
+          PR_NUMBER: ${{ github.event.number }}
+          SOURCE_DB: ${{ vars.SOURCE_DB || vars.TEMPLATE_DB || vars.BASE_DB }}
+          PGHOST: ${{ secrets.PGHOST }}
+          PGPORT: ${{ secrets.PGPORT }}
+          PGUSER: ${{ secrets.PGUSER }}
+          PGPASSWORD: ${{ secrets.PGPASSWORD }}
+          PGDATABASE: ${{ vars.PGDATABASE }}
+        run: |
+          chmod +x scripts/preview-db.sh
+          scripts/preview-db.sh drop
