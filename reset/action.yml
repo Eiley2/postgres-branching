@@ -1,17 +1,13 @@
-name: "Postgres Branching"
-description: "Create, delete, or reset preview databases inside the same PostgreSQL instance"
+name: "Postgres Branching - Reset"
+description: "Resets a preview database branch from its parent inside the same PostgreSQL instance"
 
 inputs:
-  command:
-    description: "Operation to perform: create, delete, or reset"
-    required: true
   branch_name:
-    description: "Preview database branch name"
+    description: "Preview database branch name to reset"
     required: true
   parent_branch:
-    description: "Parent database branch to clone/restore from (required for create and reset)"
-    required: false
-    default: ""
+    description: "Parent database branch to restore from"
+    required: true
   app_db_user:
     description: "Optional DB role to grant privileges on preview DB"
     required: false
@@ -44,7 +40,6 @@ runs:
     - id: run
       shell: bash
       env:
-        COMMAND: ${{ inputs.command }}
         BRANCH_NAME: ${{ inputs.branch_name }}
         PARENT_BRANCH: ${{ inputs.parent_branch }}
         APP_DB_USER: ${{ inputs.app_db_user }}
@@ -55,7 +50,6 @@ runs:
         PGDATABASE: ${{ inputs.pg_database }}
       run: |
         set -euo pipefail
-        chmod +x "$GITHUB_ACTION_PATH/scripts/preview-branch.sh"
-        "$GITHUB_ACTION_PATH/scripts/preview-branch.sh" "$COMMAND"
-
+        chmod +x "$GITHUB_ACTION_PATH/../scripts/preview-branch.sh"
+        "$GITHUB_ACTION_PATH/../scripts/preview-branch.sh" reset
         echo "preview_db=${BRANCH_NAME}" >> "$GITHUB_OUTPUT"

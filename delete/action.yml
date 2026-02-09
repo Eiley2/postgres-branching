@@ -1,21 +1,10 @@
-name: "Postgres Branching"
-description: "Create, delete, or reset preview databases inside the same PostgreSQL instance"
+name: "Postgres Branching - Delete"
+description: "Deletes a preview database branch inside the same PostgreSQL instance"
 
 inputs:
-  command:
-    description: "Operation to perform: create, delete, or reset"
-    required: true
   branch_name:
-    description: "Preview database branch name"
+    description: "Preview database branch name to delete"
     required: true
-  parent_branch:
-    description: "Parent database branch to clone/restore from (required for create and reset)"
-    required: false
-    default: ""
-  app_db_user:
-    description: "Optional DB role to grant privileges on preview DB"
-    required: false
-    default: ""
   pg_host:
     description: "PostgreSQL host"
     required: true
@@ -44,10 +33,7 @@ runs:
     - id: run
       shell: bash
       env:
-        COMMAND: ${{ inputs.command }}
         BRANCH_NAME: ${{ inputs.branch_name }}
-        PARENT_BRANCH: ${{ inputs.parent_branch }}
-        APP_DB_USER: ${{ inputs.app_db_user }}
         PGHOST: ${{ inputs.pg_host }}
         PGPORT: ${{ inputs.pg_port }}
         PGUSER: ${{ inputs.pg_user }}
@@ -55,7 +41,6 @@ runs:
         PGDATABASE: ${{ inputs.pg_database }}
       run: |
         set -euo pipefail
-        chmod +x "$GITHUB_ACTION_PATH/scripts/preview-branch.sh"
-        "$GITHUB_ACTION_PATH/scripts/preview-branch.sh" "$COMMAND"
-
+        chmod +x "$GITHUB_ACTION_PATH/../scripts/preview-branch.sh"
+        "$GITHUB_ACTION_PATH/../scripts/preview-branch.sh" delete
         echo "preview_db=${BRANCH_NAME}" >> "$GITHUB_OUTPUT"

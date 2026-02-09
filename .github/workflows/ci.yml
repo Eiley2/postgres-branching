@@ -1,0 +1,63 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  unit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate script syntax
+        run: bash -n scripts/preview-branch.sh
+      - name: Validate test script syntax
+        run: |
+          bash -n tests/test_create_action.sh
+          bash -n tests/test_reset_action.sh
+          bash -n tests/test_delete_action.sh
+      - name: Run unit tests
+        run: |
+          chmod +x tests/test_create_action.sh tests/test_reset_action.sh tests/test_delete_action.sh
+          ./tests/test_create_action.sh
+          ./tests/test_reset_action.sh
+          ./tests/test_delete_action.sh
+
+  integration:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:18
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate integration script syntax
+        run: |
+          bash -n tests/test_create_action_integration.sh
+          bash -n tests/test_reset_action_integration.sh
+          bash -n tests/test_delete_action_integration.sh
+      - name: Run integration tests
+        env:
+          PGHOST: 127.0.0.1
+          PGPORT: "5432"
+          PGUSER: postgres
+          PGPASSWORD: postgres
+          PGDATABASE: postgres
+        run: |
+          chmod +x tests/test_create_action_integration.sh tests/test_reset_action_integration.sh tests/test_delete_action_integration.sh
+          ./tests/test_create_action_integration.sh
+          ./tests/test_reset_action_integration.sh
+          ./tests/test_delete_action_integration.sh

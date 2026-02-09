@@ -1,73 +1,116 @@
-# db-preview-branching
+# Postgres Branching
 
-Reusable GitHub Action to create/drop PostgreSQL preview databases per pull request.
+![CI](https://github.com/Eiley2/postgres-branching/actions/workflows/ci.yml/badge.svg)
+![Compatibility](https://github.com/Eiley2/postgres-branching/actions/workflows/compatibility.yml/badge.svg)
+![MIT License](https://img.shields.io/badge/license-MIT-green.svg)
 
-## What It Does
+GitHub Action toolkit to create, reset, and delete preview databases in the **same PostgreSQL instance**, similar to branching workflows.
 
-- `create` mode:
-  - If preview DB does not exist: creates it and clones data from `SOURCE_DB` using `pg_dump | pg_restore`.
-  - If preview DB already exists: no-op (success).
-- `drop` mode:
-  - Terminates active sessions on preview DB and drops it.
+## Actions
 
-This avoids `CREATE DATABASE ... TEMPLATE` lock limitations when the source DB has active connections.
+- `Eiley2/postgres-branching@v1` (single action with `command`)
+- `Eiley2/postgres-branching/create@v1`
+- `Eiley2/postgres-branching/reset@v1`
+- `Eiley2/postgres-branching/delete@v1`
 
-## Recommended Consumption Model
+## Core behavior
 
-Use this repository as a dedicated reusable action and call it with short syntax:
+- `create`: creates `branch_name` from `parent_branch`; if it already exists, it is a no-op.
+- `reset`: recreates `branch_name` from `parent_branch`.
+- `delete`: drops `branch_name` if present.
 
-`uses: Eiley2/db-preview-branching@<ref>`
+## Compatibility
 
-That keeps callers simple and avoids the longer reusable-workflow path syntax.
+- Verified in CI with PostgreSQL `13` to `18` (`compatibility.yml`).
+- For clone operations (`create`/`reset`), if local `pg_dump` major differs from server major, the script uses Docker `postgres:<server_major>` client automatically.
 
-## Use From Other Repositories (Short Action Syntax)
+## Inputs
+
+Common inputs:
+
+- `branch_name` (required)
+- `pg_host`, `pg_port`, `pg_user`, `pg_password` (required)
+- `pg_database` (optional, default `postgres`)
+
+Extra inputs for `create` and `reset`:
+
+- `parent_branch` (required)
+- `app_db_user` (optional)
+
+## Usage
+
+### Single action + command
 
 ```yaml
-name: Preview Branch DB
-
-on:
-  pull_request:
-    types: [opened, reopened, synchronize, closed]
-
-permissions:
-  contents: read
-
-jobs:
-  preview-db:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Create/Drop preview branch DB
-        uses: Eiley2/db-preview-branching@main
-        with:
-          mode: ${{ github.event.action == 'closed' && 'drop' || 'create' }}
-          base_db: geopark
-          pr_number: ${{ github.event.number }}
-          source_db: geopark
-          pg_host: ${{ secrets.PGHOST }}
-          pg_port: "5432"
-          pg_user: ${{ secrets.PGUSER }}
-          pg_password: ${{ secrets.PGPASSWORD }}
-          pg_database: postgres
+- name: Create preview database
+  uses: Eiley2/postgres-branching@v1
+  with:
+    command: create
+    branch_name: app_pr_123
+    parent_branch: app_main
+    pg_host: ${{ secrets.PGHOST }}
+    pg_port: ${{ secrets.PGPORT }}
+    pg_user: ${{ secrets.PGUSER }}
+    pg_password: ${{ secrets.PGPASSWORD }}
+    pg_database: postgres
 ```
 
-## Optional: Use As Reusable Workflow
+### Sub-action: create
 
-If you still want centralized orchestration by workflow:
+```yaml
+- name: Create preview database
+  uses: Eiley2/postgres-branching/create@v1
+  with:
+    branch_name: app_pr_123
+    parent_branch: app_main
+    pg_host: ${{ secrets.PGHOST }}
+    pg_port: ${{ secrets.PGPORT }}
+    pg_user: ${{ secrets.PGUSER }}
+    pg_password: ${{ secrets.PGPASSWORD }}
+    pg_database: postgres
+```
 
-`Eiley2/db-preview-branching/.github/workflows/preview-db-reusable.yml@main`
+### Sub-action: reset
 
-with:
-- `event_action`
-- `base_db`
-- `pr_number`
-- optional `source_db`, `app_db_user`, `pg_port`, `pg_database`, `action_repository`, `action_ref`
-- secrets `pg_host`, `pg_user`, `pg_password`
+```yaml
+- name: Reset preview database
+  uses: Eiley2/postgres-branching/reset@v1
+  with:
+    branch_name: app_pr_123
+    parent_branch: app_main
+    pg_host: ${{ secrets.PGHOST }}
+    pg_port: ${{ secrets.PGPORT }}
+    pg_user: ${{ secrets.PGUSER }}
+    pg_password: ${{ secrets.PGPASSWORD }}
+```
 
-For production, pass `action_ref` as a full commit SHA.
+### Sub-action: delete
 
-## Recommended Security Defaults
+```yaml
+- name: Delete preview database
+  uses: Eiley2/postgres-branching/delete@v1
+  with:
+    branch_name: app_pr_123
+    pg_host: ${{ secrets.PGHOST }}
+    pg_port: ${{ secrets.PGPORT }}
+    pg_user: ${{ secrets.PGUSER }}
+    pg_password: ${{ secrets.PGPASSWORD }}
+```
 
-- Pin `uses:` to a full commit SHA in production repositories.
-- Keep `permissions` minimal (`contents: read` by default).
-- Prefer short-lived credentials (OIDC) when possible.
-- Scope DB user privileges to only what is required for create/drop/restore operations.
+## Local testing
+
+```bash
+chmod +x tests/*.sh
+./tests/test_create_action.sh
+./tests/test_reset_action.sh
+./tests/test_delete_action.sh
+
+# Requires running PostgreSQL
+PGHOST=127.0.0.1 PGPORT=5432 PGUSER=postgres PGPASSWORD=postgres PGDATABASE=postgres ./tests/test_create_action_integration.sh
+PGHOST=127.0.0.1 PGPORT=5432 PGUSER=postgres PGPASSWORD=postgres PGDATABASE=postgres ./tests/test_reset_action_integration.sh
+PGHOST=127.0.0.1 PGPORT=5432 PGUSER=postgres PGPASSWORD=postgres PGDATABASE=postgres ./tests/test_delete_action_integration.sh
+```
+
+## License
+
+MIT
