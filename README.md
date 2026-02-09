@@ -18,11 +18,13 @@ GitHub Action toolkit to create, reset, and delete preview databases in the **sa
 - `create`: creates `branch_name` from `parent_branch`; if it already exists, it is a no-op.
 - `reset`: recreates `branch_name` from `parent_branch`.
 - `delete`: drops `branch_name` if present.
+- Operations are serialized per `branch_name` with an advisory lock held for the full command lifecycle.
 
 ## Compatibility
 
 - Verified in CI with PostgreSQL `13` to `18` (`compatibility.yml`).
-- For clone operations (`create`/`reset`), if local `pg_dump` major differs from server major, the script uses Docker `postgres:<server_major>` client automatically.
+- For clone operations (`create`/`reset`), `clone_strategy=auto` uses Docker `postgres:<server_major>` when local `pg_dump` major differs from server major.
+- Docker clone mode propagates common `PG*` connection/SSL env vars (including `PGSSLMODE`, cert/key paths).
 
 ## Inputs
 
@@ -36,6 +38,7 @@ Extra inputs for `create` and `reset`:
 
 - `parent_branch` (required)
 - `app_db_user` (optional)
+- `clone_strategy` (optional, default `auto`: `auto`, `local`, `docker`)
 
 ## Usage
 
@@ -53,6 +56,7 @@ Extra inputs for `create` and `reset`:
     pg_user: ${{ secrets.PGUSER }}
     pg_password: ${{ secrets.PGPASSWORD }}
     pg_database: postgres
+    clone_strategy: auto
 ```
 
 ### Sub-action: create
@@ -68,6 +72,7 @@ Extra inputs for `create` and `reset`:
     pg_user: ${{ secrets.PGUSER }}
     pg_password: ${{ secrets.PGPASSWORD }}
     pg_database: postgres
+    clone_strategy: auto
 ```
 
 ### Sub-action: reset
@@ -82,6 +87,7 @@ Extra inputs for `create` and `reset`:
     pg_port: ${{ secrets.PGPORT }}
     pg_user: ${{ secrets.PGUSER }}
     pg_password: ${{ secrets.PGPASSWORD }}
+    clone_strategy: auto
 ```
 
 ### Sub-action: delete

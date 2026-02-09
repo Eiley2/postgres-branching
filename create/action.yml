@@ -12,6 +12,10 @@ inputs:
     description: "Optional DB role to grant privileges on preview DB"
     required: false
     default: ""
+  clone_strategy:
+    description: "Clone client strategy: auto, local, or docker"
+    required: false
+    default: "auto"
   pg_host:
     description: "PostgreSQL host"
     required: true
@@ -43,6 +47,7 @@ runs:
         BRANCH_NAME: ${{ inputs.branch_name }}
         PARENT_BRANCH: ${{ inputs.parent_branch }}
         APP_DB_USER: ${{ inputs.app_db_user }}
+        CLONE_STRATEGY: ${{ inputs.clone_strategy }}
         PGHOST: ${{ inputs.pg_host }}
         PGPORT: ${{ inputs.pg_port }}
         PGUSER: ${{ inputs.pg_user }}
