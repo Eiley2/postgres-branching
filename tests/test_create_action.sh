@@ -34,17 +34,23 @@ setup_mocks() {
   MOCK_SQL_DIR="${TEST_TMP_DIR}/sql"
   MOCK_LOG_DIR="${TEST_TMP_DIR}/logs"
   MOCK_COUNT_FILE="${TEST_TMP_DIR}/psql.count"
+  MOCK_COUNT_LOCK_FILE="${TEST_TMP_DIR}/psql.count.lock"
   mkdir -p "$MOCK_BIN_DIR" "$MOCK_SQL_DIR" "$MOCK_LOG_DIR"
   printf '0\n' > "$MOCK_COUNT_FILE"
+  : > "$MOCK_COUNT_LOCK_FILE"
 
   cat > "$MOCK_BIN_DIR/psql" <<'PSQL'
 #!/usr/bin/env bash
 set -euo pipefail
 count_file="${MOCK_COUNT_FILE:?}"
+count_lock_file="${MOCK_COUNT_LOCK_FILE:?}"
 sql_dir="${MOCK_SQL_DIR:?}"
+exec 9>"$count_lock_file"
+flock 9
 count="$(cat "$count_file")"
 count=$((count + 1))
 printf '%s\n' "$count" > "$count_file"
+flock -u 9
 out="${sql_dir}/call_${count}.sql"
 args=("$@")
 sql_flag=""
@@ -102,6 +108,7 @@ DOCKER
 run_script() {
   PATH="${MOCK_BIN_DIR}:${PATH}" \
   MOCK_COUNT_FILE="$MOCK_COUNT_FILE" \
+  MOCK_COUNT_LOCK_FILE="$MOCK_COUNT_LOCK_FILE" \
   MOCK_SQL_DIR="$MOCK_SQL_DIR" \
   MOCK_LOG_DIR="$MOCK_LOG_DIR" \
   MOCK_PSQL_STDOUT="${MOCK_PSQL_STDOUT:-}" \
@@ -124,6 +131,7 @@ run_script() {
 run_script_capture() {
   PATH="${MOCK_BIN_DIR}:${PATH}" \
   MOCK_COUNT_FILE="$MOCK_COUNT_FILE" \
+  MOCK_COUNT_LOCK_FILE="$MOCK_COUNT_LOCK_FILE" \
   MOCK_SQL_DIR="$MOCK_SQL_DIR" \
   MOCK_LOG_DIR="$MOCK_LOG_DIR" \
   MOCK_PSQL_STDOUT="${MOCK_PSQL_STDOUT:-}" \
@@ -232,6 +240,7 @@ test_missing_env_fails_before_psql() {
   set +e
   PATH="${MOCK_BIN_DIR}:${PATH}" \
   MOCK_COUNT_FILE="$MOCK_COUNT_FILE" \
+  MOCK_COUNT_LOCK_FILE="$MOCK_COUNT_LOCK_FILE" \
   MOCK_SQL_DIR="$MOCK_SQL_DIR" \
   MOCK_LOG_DIR="$MOCK_LOG_DIR" \
   LOCK_STRATEGY="none" \
