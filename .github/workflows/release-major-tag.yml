@@ -70,8 +70,19 @@ jobs:
           echo "Updating ${major_alias} -> ${major_latest_tag} (${major_target_sha})"
           echo "Updating latest -> ${latest_stable_tag} (${latest_target_sha})"
 
-          git tag -f "${major_alias}" "${major_target_sha}"
-          git tag -f latest "${latest_target_sha}"
+          current_major_sha="$(git rev-parse -q --verify "refs/tags/${major_alias}^{commit}" || true)"
+          current_latest_sha="$(git rev-parse -q --verify "refs/tags/latest^{commit}" || true)"
 
-          git push origin "refs/tags/${major_alias}" --force
-          git push origin refs/tags/latest --force
+          if [[ "${current_major_sha}" != "${major_target_sha}" ]]; then
+            git tag -f "${major_alias}" "${major_target_sha}"
+            git push origin "refs/tags/${major_alias}" --force
+          else
+            echo "${major_alias} already points to ${major_target_sha}; no update needed."
+          fi
+
+          if [[ "${current_latest_sha}" != "${latest_target_sha}" ]]; then
+            git tag -f latest "${latest_target_sha}"
+            git push origin refs/tags/latest --force
+          else
+            echo "latest already points to ${latest_target_sha}; no update needed."
+          fi
