@@ -28,17 +28,50 @@ jobs:
           fi
 
           git fetch --force --tags origin
-          target_sha="$(git rev-list -n 1 "${RELEASE_TAG}")"
 
-          if [[ -z "${target_sha}" ]]; then
-            echo "Could not resolve ${RELEASE_TAG}."
+          major_alias="$(printf '%s' "${RELEASE_TAG}" | cut -d. -f1)"
+          major_number="${major_alias#v}"
+
+          major_latest_tag="$(
+            git tag --list "v${major_number}.*" \
+              | grep -E "^v${major_number}\.[0-9]+\.[0-9]+$" \
+              | sort -V \
+              | tail -n1 || true
+          )"
+
+          if [[ -z "${major_latest_tag}" ]]; then
+            echo "Could not resolve latest stable tag for major ${major_alias}."
             exit 1
           fi
 
-          major_alias="$(printf '%s' "${RELEASE_TAG}" | cut -d. -f1)"
+          major_target_sha="$(git rev-list -n 1 "${major_latest_tag}")"
+          if [[ -z "${major_target_sha}" ]]; then
+            echo "Could not resolve commit for ${major_latest_tag}."
+            exit 1
+          fi
 
-          git tag -f "${major_alias}" "${target_sha}"
-          git tag -f latest "${target_sha}"
+          latest_stable_tag="$(
+            git tag --list 'v*' \
+              | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' \
+              | sort -V \
+              | tail -n1 || true
+          )"
+          if [[ -z "${latest_stable_tag}" ]]; then
+            echo "Could not resolve latest stable semver tag."
+            exit 1
+          fi
+
+          latest_target_sha="$(git rev-list -n 1 "${latest_stable_tag}")"
+          if [[ -z "${latest_target_sha}" ]]; then
+            echo "Could not resolve commit for ${latest_stable_tag}."
+            exit 1
+          fi
+
+          echo "Updating ${major_alias} -> ${major_latest_tag} (${major_target_sha})"
+          echo "Updating latest -> ${latest_stable_tag} (${latest_target_sha})"
+
+          git tag -f "${major_alias}" "${major_target_sha}"
+          git tag -f latest "${latest_target_sha}"
 
           git push origin "refs/tags/${major_alias}" --force
           git push origin refs/tags/latest --force
