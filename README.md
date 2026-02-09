@@ -19,12 +19,14 @@ GitHub Action toolkit to create, reset, and delete preview databases in the **sa
 - `reset`: recreates `branch_name` from `parent_branch`.
 - `delete`: drops `branch_name` if present.
 - Operations are serialized per `branch_name` with an advisory lock held for the full command lifecycle.
+- If another operation already holds the lock for the same `branch_name`, the command waits up to `LOCK_WAIT_TIMEOUT_SEC` (default `300`) and then fails.
 
 ## Compatibility
 
 - Verified in CI with PostgreSQL `13` to `18` (`compatibility.yml`).
 - For clone operations (`create`/`reset`), `clone_strategy=auto` uses Docker `postgres:<server_major>` when local `pg_dump` major differs from server major.
 - Docker clone mode propagates common `PG*` connection/SSL env vars (including `PGSSLMODE`, cert/key paths).
+- If `clone_strategy=auto` or `clone_strategy=docker` requires Docker and Docker is unavailable, the command fails with an explicit error.
 
 ## Inputs
 
@@ -38,7 +40,7 @@ Extra inputs for `create` and `reset`:
 
 - `parent_branch` (required)
 - `app_db_user` (optional, grants DB + schema/table/sequence privileges on the preview DB)
-- `clone_strategy` (optional, default `auto`: `auto`, `local`, `docker`)
+- `clone_strategy` (optional, default `auto`): `auto` picks local vs Docker by version compatibility, `local` forces local `pg_dump`/`pg_restore`, `docker` forces Docker client cloning.
 
 ## Usage
 

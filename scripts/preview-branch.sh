@@ -64,8 +64,12 @@ psql_preview() {
 }
 
 cleanup_lock_resources() {
-  [[ -n "${LOCK_READY_FILE:-}" ]] && rm -f "${LOCK_READY_FILE}" || true
-  [[ -n "${LOCK_LOG_FILE:-}" ]] && rm -f "${LOCK_LOG_FILE}" || true
+  if [[ -n "${LOCK_READY_FILE:-}" ]]; then
+    rm -f "${LOCK_READY_FILE}" || true
+  fi
+  if [[ -n "${LOCK_LOG_FILE:-}" ]]; then
+    rm -f "${LOCK_LOG_FILE}" || true
+  fi
   LOCK_READY_FILE=""
   LOCK_LOG_FILE=""
 }
@@ -159,6 +163,8 @@ clone_from_source_docker() {
   local -a docker_network_args=()
   local -a docker_mount_args=()
   local -a docker_env_args=(-e PGPASSWORD -e PGHOST -e PGPORT -e PGUSER -e PARENT_BRANCH -e PREVIEW_DB)
+  local -a docker_cmd=(docker run --rm)
+  local docker_script
   local env_name cert_var cert_path
 
   command -v docker >/dev/null 2>&1 \
@@ -187,21 +193,28 @@ clone_from_source_docker() {
     docker_mount_args+=(-v "${PGSSLCRLDIR}:${PGSSLCRLDIR}:ro")
   fi
 
-  PGPASSWORD="${PGPASSWORD}" \
-  PGHOST="${docker_pghost}" \
-  PARENT_BRANCH="${PARENT_BRANCH}" \
-  PREVIEW_DB="${PREVIEW_DB}" \
-  docker run --rm \
-    "${docker_network_args[@]}" \
-    "${docker_mount_args[@]}" \
-    "${docker_env_args[@]}" \
-    "postgres:${server_major}" \
-    bash -euo pipefail -c '
+  # Guard optional array expansion so this stays safe in strict nounset shells.
+  if (( ${#docker_network_args[@]} > 0 )); then
+    docker_cmd+=("${docker_network_args[@]}")
+  fi
+  if (( ${#docker_mount_args[@]} > 0 )); then
+    docker_cmd+=("${docker_mount_args[@]}")
+  fi
+  docker_cmd+=("${docker_env_args[@]}")
+
+  docker_script='
       pg_dump -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -d "$PARENT_BRANCH" \
         --format=custom --no-owner --no-acl \
       | pg_restore -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -d "$PREVIEW_DB" \
         --no-owner --no-acl --clean --if-exists --exit-on-error
     '
+  docker_cmd+=("postgres:${server_major}" bash -euo pipefail -c "${docker_script}")
+
+  PGPASSWORD="${PGPASSWORD}" \
+  PGHOST="${docker_pghost}" \
+  PARENT_BRANCH="${PARENT_BRANCH}" \
+  PREVIEW_DB="${PREVIEW_DB}" \
+  "${docker_cmd[@]}"
 }
 
 clone_from_source() {
@@ -263,6 +276,8 @@ grant_app_user() {
 
     log "Granting database and schema privileges on ${PREVIEW_DB} to ${APP_DB_USER}."
     psql_admin -c "GRANT ALL PRIVILEGES ON DATABASE $(qident "${PREVIEW_DB}") TO ${app_user_ident};"
+    # app_user_ident is shell-expanded in this heredoc and is safe because
+    # APP_DB_USER is strictly validated by validate_identifier above.
     psql_preview <<SQL
 DO \$\$
 DECLARE
