@@ -37,7 +37,7 @@ Common inputs:
 Extra inputs for `create` and `reset`:
 
 - `parent_branch` (required)
-- `app_db_user` (optional)
+- `app_db_user` (optional, grants DB + schema/table/sequence privileges on the preview DB)
 - `clone_strategy` (optional, default `auto`: `auto`, `local`, `docker`)
 
 ## Usage

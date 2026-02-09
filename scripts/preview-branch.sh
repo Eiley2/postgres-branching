@@ -56,6 +56,13 @@ psql_admin() {
     -d "${PGDATABASE:-postgres}" "$@"
 }
 
+psql_preview() {
+  PGPASSWORD="${PGPASSWORD}" psql \
+    -v ON_ERROR_STOP=1 -X -q \
+    -h "${PGHOST}" -p "${PGPORT}" -U "${PGUSER}" \
+    -d "${PREVIEW_DB}" "$@"
+}
+
 cleanup_lock_resources() {
   [[ -n "${LOCK_READY_FILE:-}" ]] && rm -f "${LOCK_READY_FILE}" || true
   [[ -n "${LOCK_LOG_FILE:-}" ]] && rm -f "${LOCK_LOG_FILE}" || true
@@ -247,9 +254,32 @@ SQL
 
 grant_app_user() {
   if [[ -n "${APP_DB_USER:-}" ]]; then
+    local app_user_ident
     validate_identifier "${APP_DB_USER}" APP_DB_USER
-    log "Granting privileges on ${PREVIEW_DB} to ${APP_DB_USER}."
-    psql_admin -c "GRANT ALL PRIVILEGES ON DATABASE $(qident "${PREVIEW_DB}") TO $(qident "${APP_DB_USER}");"
+    app_user_ident="$(qident "${APP_DB_USER}")"
+
+    log "Granting database and schema privileges on ${PREVIEW_DB} to ${APP_DB_USER}."
+    psql_admin -c "GRANT ALL PRIVILEGES ON DATABASE $(qident "${PREVIEW_DB}") TO ${app_user_ident};"
+    psql_preview <<SQL
+DO \$\$
+DECLARE
+  schema_name text;
+BEGIN
+  FOR schema_name IN
+    SELECT nspname
+    FROM pg_namespace
+    WHERE nspname NOT IN ('pg_catalog', 'information_schema')
+      AND nspname NOT LIKE 'pg_toast%'
+  LOOP
+    EXECUTE format('GRANT USAGE ON SCHEMA %I TO %s', schema_name, '${app_user_ident}');
+    EXECUTE format('GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA %I TO %s', schema_name, '${app_user_ident}');
+    EXECUTE format('GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA %I TO %s', schema_name, '${app_user_ident}');
+    EXECUTE format('ALTER DEFAULT PRIVILEGES IN SCHEMA %I GRANT ALL PRIVILEGES ON TABLES TO %s', schema_name, '${app_user_ident}');
+    EXECUTE format('ALTER DEFAULT PRIVILEGES IN SCHEMA %I GRANT ALL PRIVILEGES ON SEQUENCES TO %s', schema_name, '${app_user_ident}');
+  END LOOP;
+END
+\$\$;
+SQL
   fi
 }
 

@@ -102,6 +102,7 @@ run_script() {
   MOCK_PG_DUMP_VERSION="${MOCK_PG_DUMP_VERSION:-}" \
   CLONE_STRATEGY="${CLONE_STRATEGY:-auto}" \
   LOCK_STRATEGY="${LOCK_STRATEGY:-none}" \
+  APP_DB_USER="${APP_DB_USER:-}" \
   BRANCH_NAME="geopark_preview" \
   PARENT_BRANCH="geopark" \
   PGHOST="localhost" \
@@ -155,6 +156,17 @@ test_create_is_noop_when_exists() {
   assert_not_exists "${MOCK_LOG_DIR}/docker.args" "noop should not run docker"
 }
 
+test_create_grants_app_user_access() {
+  setup_mocks
+  MOCK_PSQL_STDOUT=$'SERVER_VERSION_NUM=180001\nPREVIEW_CREATED=1'
+  APP_DB_USER="preview_user"
+  run_script
+  assert_eq "3" "$(cat "$MOCK_COUNT_FILE")" "grant flow should add two psql calls"
+  assert_contains "GRANT ALL PRIVILEGES ON DATABASE" "${MOCK_SQL_DIR}/call_2.sql" "should grant database privileges"
+  assert_contains "GRANT USAGE ON SCHEMA" "${MOCK_SQL_DIR}/call_3.sql" "should grant schema usage"
+  assert_contains "ALTER DEFAULT PRIVILEGES" "${MOCK_SQL_DIR}/call_3.sql" "should grant default privileges"
+}
+
 test_missing_env_fails_before_psql() {
   setup_mocks
   set +e
@@ -176,6 +188,7 @@ main() {
   test_create_uses_docker_on_major_mismatch
   test_create_honors_local_clone_strategy
   test_create_is_noop_when_exists
+  test_create_grants_app_user_access
   test_missing_env_fails_before_psql
   echo "PASS: create action tests"
 }
