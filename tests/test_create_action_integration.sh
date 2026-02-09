@@ -5,6 +5,7 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SCRIPT_PATH="${ROOT_DIR}/scripts/preview-branch.sh"
 PARENT_CONN_PID_1=""
 PARENT_CONN_PID_2=""
+STALE_LOCK_PID=""
 
 log_step() {
   printf '[create-integration] %s\n' "$*"
@@ -52,6 +53,7 @@ assert_no_branch_lock_holder() {
         AND l.classid = 20461
         AND l.objid = hashtext('${BRANCH_NAME}')
         AND l.granted
+        AND a.application_name = 'postgres-branching-lock-holder'
         AND a.query = 'SELECT pg_sleep(86400);';"
   )"
   if [[ "${holder_count}" != "0" ]]; then
@@ -65,6 +67,45 @@ assert_no_branch_lock_holder() {
         AND l.granted;" >&2
     exit 1
   fi
+}
+
+start_stale_lock_holder() {
+  log_step "Starting synthetic stale lock holder for ${BRANCH_NAME}"
+  PGAPPNAME="postgres-branching-lock-holder" \
+  PGPASSWORD="${PGPASSWORD}" psql \
+    -v ON_ERROR_STOP=1 \
+    -X \
+    -h "${PGHOST}" \
+    -p "${PGPORT}" \
+    -U "${PGUSER}" \
+    -d "${PGDATABASE:-postgres}" <<SQL >/dev/null 2>&1 &
+SELECT pg_advisory_lock(20461, hashtext('${BRANCH_NAME}'));
+SELECT pg_sleep(86400);
+SQL
+  STALE_LOCK_PID="$!"
+
+  local waited=0
+  while (( waited < 20 )); do
+    local holder_count
+    holder_count="$(
+      psql_admin -Atqc "SELECT count(*) FROM pg_locks l
+        JOIN pg_stat_activity a ON a.pid = l.pid
+        WHERE l.locktype = 'advisory'
+          AND l.classid = 20461
+          AND l.objid = hashtext('${BRANCH_NAME}')
+          AND l.granted
+          AND a.application_name = 'postgres-branching-lock-holder'
+          AND a.query = 'SELECT pg_sleep(86400);';"
+    )"
+    if [[ "${holder_count}" != "0" ]]; then
+      return 0
+    fi
+    sleep 1
+    waited=$((waited + 1))
+  done
+
+  printf 'FAIL: synthetic stale lock holder did not acquire lock in time\n' >&2
+  exit 1
 }
 
 run_preview_branch_tests() {
@@ -86,6 +127,9 @@ cleanup() {
   fi
   if [[ -n "${PARENT_CONN_PID_2}" ]]; then
     kill "${PARENT_CONN_PID_2}" >/dev/null 2>&1 || true
+  fi
+  if [[ -n "${STALE_LOCK_PID}" ]]; then
+    kill "${STALE_LOCK_PID}" >/dev/null 2>&1 || true
   fi
   psql_admin -c "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname IN ('${PARENT_BRANCH}','${PREVIEW_DB}') AND pid <> pg_backend_pid();" >/dev/null 2>&1
   psql_admin -c "DROP DATABASE IF EXISTS \"${PREVIEW_DB}\";" >/dev/null 2>&1
@@ -187,6 +231,37 @@ main() {
     exit 1
   fi
   assert_no_branch_lock_holder "after second create"
+
+  log_step "Step 7: forcing a stale lock holder and validating auto-cleanup + retry"
+  start_stale_lock_holder
+  recovery_output="$(
+    BRANCH_NAME="${BRANCH_NAME}" \
+    PARENT_BRANCH="${PARENT_BRANCH}" \
+    PGHOST="${PGHOST}" \
+    PGPORT="${PGPORT}" \
+    PGUSER="${PGUSER}" \
+    PGPASSWORD="${PGPASSWORD}" \
+    PGDATABASE="${PGDATABASE:-postgres}" \
+    LOCK_WAIT_TIMEOUT_SEC="1" \
+    LOCK_STALE_AFTER_SEC="0" \
+    "${SCRIPT_PATH}" create 2>&1
+  )"
+  printf '%s\n' "${recovery_output}"
+  if ! grep -q "Terminating stale lock holder" <<<"${recovery_output}"; then
+    printf 'FAIL: expected stale lock cleanup log during recovery create\n' >&2
+    exit 1
+  fi
+  if ! grep -q "Retrying operation lock acquisition after stale-lock cleanup" <<<"${recovery_output}"; then
+    printf 'FAIL: expected lock acquisition retry log during recovery create\n' >&2
+    exit 1
+  fi
+  if grep -q "Timed out waiting for operation lock" <<<"${recovery_output}"; then
+    printf 'FAIL: recovery create should not fail with lock timeout\n' >&2
+    exit 1
+  fi
+  assert_no_branch_lock_holder "after stale lock recovery create"
+  wait "${STALE_LOCK_PID}" >/dev/null 2>&1 || true
+  STALE_LOCK_PID=""
 
   echo "PASS: create action integration test"
 }

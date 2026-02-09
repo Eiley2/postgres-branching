@@ -9,6 +9,7 @@ LABEL="preview-branch"
 LOCK_NAMESPACE=20461
 LOCK_HOLDER_APP_NAME="postgres-branching-lock-holder"
 LOCK_HOLDER_PID=""
+LOCK_HOLDER_DB_PID=""
 LOCK_READY_FILE=""
 LOCK_LOG_FILE=""
 CREATE_LOCK_TIMEOUT_NOOP=0
@@ -97,6 +98,7 @@ terminate_stale_branch_locks() {
     psql_admin -t -A -F $'\t' \
       -v branch_name="${BRANCH_NAME}" \
       -v lock_namespace="${LOCK_NAMESPACE}" \
+      -v lock_holder_app_name="${LOCK_HOLDER_APP_NAME}" \
       -v stale_after="${stale_after}" <<'SQL'
 SELECT a.pid, a.application_name, EXTRACT(EPOCH FROM (now() - a.query_start))::bigint AS age_sec
 FROM pg_locks l
@@ -106,6 +108,7 @@ WHERE l.locktype = 'advisory'
   AND l.objid = hashtext(:'branch_name')
   AND l.granted
   AND a.pid <> pg_backend_pid()
+  AND a.application_name = :'lock_holder_app_name'
   AND a.query = 'SELECT pg_sleep(86400);'
   AND EXTRACT(EPOCH FROM (now() - a.query_start)) >= :stale_after;
 SQL
@@ -117,7 +120,7 @@ SQL
     [[ -n "${pid}" ]] || continue
     [[ "${pid}" =~ ^[0-9]+$ ]] || continue
     log "Terminating stale lock holder pid=${pid} app=${app_name:-unknown} age=${age_sec:-unknown}s for ${BRANCH_NAME}."
-    psql_admin -v pid="${pid}" -c "SELECT pg_terminate_backend(:'pid'::int);" >/dev/null
+    psql_admin -c "SELECT pg_terminate_backend(${pid});" >/dev/null
     cleaned=1
   done <<<"${stale_rows}"
 
@@ -133,6 +136,10 @@ release_branch_lock() {
     wait "${LOCK_HOLDER_PID}" >/dev/null 2>&1 || true
     LOCK_HOLDER_PID=""
   fi
+  if [[ -n "${LOCK_HOLDER_DB_PID:-}" ]] && [[ "${LOCK_HOLDER_DB_PID}" =~ ^[0-9]+$ ]]; then
+    psql_admin -c "SELECT pg_terminate_backend(${LOCK_HOLDER_DB_PID});" >/dev/null 2>&1 || true
+  fi
+  LOCK_HOLDER_DB_PID=""
   cleanup_lock_resources
 }
 
@@ -161,6 +168,7 @@ acquire_branch_lock() {
   fi
   holder_pgoptions="${holder_pgoptions}-c tcp_keepalives_idle=${keepalive_idle} -c tcp_keepalives_interval=${keepalive_interval} -c tcp_keepalives_count=${keepalive_count}"
 
+  LOCK_HOLDER_DB_PID=""
   LOCK_READY_FILE="$(mktemp)"
   LOCK_LOG_FILE="$(mktemp)"
 
@@ -174,8 +182,10 @@ acquire_branch_lock() {
     -v lock_namespace="${LOCK_NAMESPACE}" \
     -v ready_file="${LOCK_READY_FILE}" <<'SQL' >"${LOCK_LOG_FILE}" 2>&1 &
 SELECT pg_advisory_lock(:lock_namespace, hashtext(:'branch_name'));
+SELECT pg_backend_pid() AS lock_holder_backend_pid \gset
 \o :ready_file
 \qecho LOCK_ACQUIRED
+\qecho BACKEND_PID=:lock_holder_backend_pid
 \o
 SELECT pg_sleep(86400);
 SQL
@@ -184,6 +194,11 @@ SQL
   local waited=0
   while true; do
     if [[ -f "${LOCK_READY_FILE}" ]] && grep -q '^LOCK_ACQUIRED$' "${LOCK_READY_FILE}"; then
+      local backend_pid
+      backend_pid="$(sed -n 's/^BACKEND_PID=\([0-9][0-9]*\)$/\1/p' "${LOCK_READY_FILE}" | head -n1)"
+      if [[ -n "${backend_pid}" ]]; then
+        LOCK_HOLDER_DB_PID="${backend_pid}"
+      fi
       log "Operation lock acquired for ${BRANCH_NAME}."
       return 0
     fi
