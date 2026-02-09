@@ -15,7 +15,6 @@ on:
 
 permissions:
   contents: write
-  workflows: write
 
 jobs:
   update-aliases:
@@ -25,6 +24,23 @@ jobs:
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          persist-credentials: false
+
+      - name: Configure push auth token
+        env:
+          TAG_PUSH_TOKEN: ${{ secrets.TAG_PUSH_TOKEN }}
+        run: |
+          set -euo pipefail
+
+          if [[ -z "${TAG_PUSH_TOKEN:-}" ]]; then
+            echo "Missing TAG_PUSH_TOKEN secret."
+            echo "Create a classic PAT with 'repo' and 'workflow' scopes and store it as TAG_PUSH_TOKEN."
+            exit 1
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git remote set-url origin "https://x-access-token:${TAG_PUSH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
 
       - name: Move major and latest aliases for stable releases
         env:
