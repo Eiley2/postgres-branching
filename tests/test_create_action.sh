@@ -57,7 +57,11 @@ done
 if [[ -n "$sql_flag" ]]; then
   printf '%s\n' "$sql_flag" > "$out"
 else
-  cat > "$out"
+  sql_input="$(cat)"
+  printf '%s\n' "$sql_input" > "$out"
+  if [[ "${MOCK_PSQL_HANG_ON_LOCK_CALL:-0}" == "1" ]] && grep -q "pg_sleep(86400)" <<<"$sql_input"; then
+    sleep "${MOCK_PSQL_HANG_SECONDS:-30}"
+  fi
 fi
 if [[ -n "${MOCK_PSQL_STDOUT:-}" ]]; then
   printf '%s\n' "$MOCK_PSQL_STDOUT"
@@ -91,6 +95,8 @@ DOCKER
   chmod +x "$MOCK_BIN_DIR/psql" "$MOCK_BIN_DIR/pg_dump" "$MOCK_BIN_DIR/pg_restore" "$MOCK_BIN_DIR/docker"
   MOCK_PSQL_STDOUT=""
   MOCK_PG_DUMP_VERSION="pg_dump (PostgreSQL) 18.1"
+  MOCK_PSQL_HANG_ON_LOCK_CALL="0"
+  MOCK_PSQL_HANG_SECONDS="30"
 }
 
 run_script() {
@@ -100,8 +106,11 @@ run_script() {
   MOCK_LOG_DIR="$MOCK_LOG_DIR" \
   MOCK_PSQL_STDOUT="${MOCK_PSQL_STDOUT:-}" \
   MOCK_PG_DUMP_VERSION="${MOCK_PG_DUMP_VERSION:-}" \
+  MOCK_PSQL_HANG_ON_LOCK_CALL="${MOCK_PSQL_HANG_ON_LOCK_CALL:-}" \
+  MOCK_PSQL_HANG_SECONDS="${MOCK_PSQL_HANG_SECONDS:-}" \
   CLONE_STRATEGY="${CLONE_STRATEGY:-auto}" \
   LOCK_STRATEGY="${LOCK_STRATEGY:-none}" \
+  LOCK_WAIT_TIMEOUT_SEC="${LOCK_WAIT_TIMEOUT_SEC:-300}" \
   APP_DB_USER="${APP_DB_USER:-}" \
   BRANCH_NAME="geopark_preview" \
   PARENT_BRANCH="geopark" \
@@ -110,6 +119,28 @@ run_script() {
   PGUSER="postgres" \
   PGPASSWORD="postgres" \
   "$SCRIPT_PATH" create >/dev/null 2>&1
+}
+
+run_script_capture() {
+  PATH="${MOCK_BIN_DIR}:${PATH}" \
+  MOCK_COUNT_FILE="$MOCK_COUNT_FILE" \
+  MOCK_SQL_DIR="$MOCK_SQL_DIR" \
+  MOCK_LOG_DIR="$MOCK_LOG_DIR" \
+  MOCK_PSQL_STDOUT="${MOCK_PSQL_STDOUT:-}" \
+  MOCK_PG_DUMP_VERSION="${MOCK_PG_DUMP_VERSION:-}" \
+  MOCK_PSQL_HANG_ON_LOCK_CALL="${MOCK_PSQL_HANG_ON_LOCK_CALL:-}" \
+  MOCK_PSQL_HANG_SECONDS="${MOCK_PSQL_HANG_SECONDS:-}" \
+  CLONE_STRATEGY="${CLONE_STRATEGY:-auto}" \
+  LOCK_STRATEGY="${LOCK_STRATEGY:-none}" \
+  LOCK_WAIT_TIMEOUT_SEC="${LOCK_WAIT_TIMEOUT_SEC:-300}" \
+  APP_DB_USER="${APP_DB_USER:-}" \
+  BRANCH_NAME="geopark_preview" \
+  PARENT_BRANCH="geopark" \
+  PGHOST="localhost" \
+  PGPORT="5432" \
+  PGUSER="postgres" \
+  PGPASSWORD="postgres" \
+  "$SCRIPT_PATH" create 2>&1
 }
 
 test_create_runs_local_clone_when_major_matches() {
@@ -167,6 +198,35 @@ test_create_grants_app_user_access() {
   assert_contains "ALTER DEFAULT PRIVILEGES" "${MOCK_SQL_DIR}/call_3.sql" "should grant default privileges"
 }
 
+test_create_noops_when_lock_times_out_but_preview_exists() {
+  setup_mocks
+  LOCK_STRATEGY="advisory"
+  LOCK_WAIT_TIMEOUT_SEC="0"
+  MOCK_PSQL_HANG_ON_LOCK_CALL="1"
+  MOCK_PSQL_HANG_SECONDS="3"
+  MOCK_PSQL_STDOUT="t"
+  run_script
+  if ! grep -R -q "SELECT EXISTS(SELECT 1 FROM pg_database WHERE datname = :'preview_db');" "${MOCK_SQL_DIR}"; then
+    printf 'FAIL: timeout noop should verify preview existence\n' >&2
+    exit 1
+  fi
+  assert_not_exists "${MOCK_LOG_DIR}/pg_dump.args" "timeout noop should not run pg_dump"
+  assert_not_exists "${MOCK_LOG_DIR}/pg_restore.args" "timeout noop should not run pg_restore"
+}
+
+test_create_logs_docker_switch_on_version_mismatch() {
+  setup_mocks
+  CLONE_STRATEGY="auto"
+  LOCK_STRATEGY="none"
+  MOCK_PSQL_STDOUT=$'SERVER_VERSION_NUM=160010\nPREVIEW_CREATED=1'
+  output="$(run_script_capture)"
+  if ! grep -q "Using Dockerized PostgreSQL client because local client (18) differs from server (16)." <<<"$output"; then
+    printf 'FAIL: should log why dockerized client is used\n' >&2
+    exit 1
+  fi
+  assert_contains "postgres:16" "${MOCK_LOG_DIR}/docker.args" "should still use postgres:16 docker client"
+}
+
 test_missing_env_fails_before_psql() {
   setup_mocks
   set +e
@@ -189,6 +249,8 @@ main() {
   test_create_honors_local_clone_strategy
   test_create_is_noop_when_exists
   test_create_grants_app_user_access
+  test_create_noops_when_lock_times_out_but_preview_exists
+  test_create_logs_docker_switch_on_version_mismatch
   test_missing_env_fails_before_psql
   echo "PASS: create action tests"
 }

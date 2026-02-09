@@ -10,6 +10,7 @@ LOCK_NAMESPACE=20461
 LOCK_HOLDER_PID=""
 LOCK_READY_FILE=""
 LOCK_LOG_FILE=""
+CREATE_LOCK_TIMEOUT_NOOP=0
 
 log() { printf '[%s] %s\n' "${LABEL}" "$*"; }
 die() { printf '[%s] ERROR: %s\n' "${LABEL}" "$*" >&2; exit 1; }
@@ -63,6 +64,18 @@ psql_preview() {
     -d "${PREVIEW_DB}" "$@"
 }
 
+preview_db_exists() {
+  local exists_output
+  exists_output="$(
+    psql_admin \
+      -t -A \
+      -v preview_db="${PREVIEW_DB}" \
+      -c "SELECT EXISTS(SELECT 1 FROM pg_database WHERE datname = :'preview_db');" \
+      2>/dev/null || true
+  )"
+  [[ "${exists_output}" == "t" ]]
+}
+
 cleanup_lock_resources() {
   if [[ -n "${LOCK_READY_FILE:-}" ]]; then
     rm -f "${LOCK_READY_FILE}" || true
@@ -84,11 +97,16 @@ release_branch_lock() {
 }
 
 acquire_branch_lock() {
+  local command="${1:-}"
   local lock_strategy="${LOCK_STRATEGY:-advisory}"
-  [[ "${lock_strategy}" == "advisory" ]] || return 0
+  if [[ "${lock_strategy}" != "advisory" ]]; then
+    log "Operation lock disabled (LOCK_STRATEGY=${lock_strategy})."
+    return 0
+  fi
 
   local timeout="${LOCK_WAIT_TIMEOUT_SEC:-300}"
   [[ "${timeout}" =~ ^[0-9]+$ ]] || die "LOCK_WAIT_TIMEOUT_SEC must be an integer (seconds)."
+  log "Waiting for operation lock on ${BRANCH_NAME} (timeout=${timeout}s)."
 
   LOCK_READY_FILE="$(mktemp)"
   LOCK_LOG_FILE="$(mktemp)"
@@ -124,6 +142,11 @@ SQL
     fi
     if (( waited >= timeout )); then
       release_branch_lock
+      if [[ "${command}" == "create" ]] && preview_db_exists; then
+        CREATE_LOCK_TIMEOUT_NOOP=1
+        log "Operation lock wait timed out after ${timeout}s, but preview DB already exists. Treating create as no-op."
+        return 0
+      fi
       die "Timed out waiting for operation lock for ${BRANCH_NAME} after ${timeout}s."
     fi
     sleep 1
@@ -149,16 +172,19 @@ extract_local_pg_dump_major() {
 clone_from_source_local() {
   command -v pg_dump    >/dev/null 2>&1 || die "Required command not found: pg_dump"
   command -v pg_restore >/dev/null 2>&1 || die "Required command not found: pg_restore"
+  log "Cloning data with local pg_dump/pg_restore from ${PARENT_BRANCH} into ${PREVIEW_DB}."
   PGPASSWORD="${PGPASSWORD}" pg_dump \
     -h "${PGHOST}" -p "${PGPORT}" -U "${PGUSER}" -d "${PARENT_BRANCH}" \
     --format=custom --no-owner --no-acl \
   | PGPASSWORD="${PGPASSWORD}" pg_restore \
     -h "${PGHOST}" -p "${PGPORT}" -U "${PGUSER}" -d "${PREVIEW_DB}" \
     --no-owner --no-acl --clean --if-exists --exit-on-error
+  log "Local clone finished for ${PREVIEW_DB}."
 }
 
 clone_from_source_docker() {
   local server_major="$1"
+  local local_major="${2:-unknown}"
   local docker_pghost="${PGHOST}"
   local -a docker_network_args=()
   local -a docker_mount_args=()
@@ -167,12 +193,16 @@ clone_from_source_docker() {
   local docker_script
   local env_name cert_var cert_path
 
-  command -v docker >/dev/null 2>&1 \
-    || die "Local pg_dump is incompatible and docker is not available."
+  log "Using Dockerized PostgreSQL client because local client (${local_major}) differs from server (${server_major})."
+  if ! command -v docker >/dev/null 2>&1; then
+    die "Docker is required to run PostgreSQL client tools in the runner. Install Docker (or use clone_strategy=local with matching client/server major versions)."
+  fi
+  log "Running clone using Docker image postgres:${server_major}."
 
   if [[ "${PGHOST}" == "127.0.0.1" || "${PGHOST}" == "localhost" ]]; then
     docker_pghost="host.docker.internal"
     docker_network_args+=(--add-host host.docker.internal:host-gateway)
+    log "Detected local PGHOST (${PGHOST}); using host.docker.internal inside Docker."
   fi
 
   for env_name in PGAPPNAME PGSSLMODE PGSSLROOTCERT PGSSLCERT PGSSLKEY PGSSLCRL PGSSLCRLDIR PGCHANNELBINDING PGTARGETSESSIONATTRS PGCONNECT_TIMEOUT PGOPTIONS; do
@@ -215,6 +245,7 @@ clone_from_source_docker() {
   PARENT_BRANCH="${PARENT_BRANCH}" \
   PREVIEW_DB="${PREVIEW_DB}" \
   "${docker_cmd[@]}"
+  log "Dockerized clone finished for ${PREVIEW_DB}."
 }
 
 clone_from_source() {
@@ -226,18 +257,20 @@ clone_from_source() {
 
   case "${clone_strategy}" in
     local)
+      log "Clone strategy selected: local (server ${server_major:-unknown}, local pg_dump ${local_major:-unknown})."
       clone_from_source_local
       ;;
     docker)
       [[ -n "${server_major}" ]] || die "Unable to detect server major version required for docker clone strategy."
-      log "Clone strategy is docker; using postgres:${server_major} client."
-      clone_from_source_docker "${server_major}"
+      log "Clone strategy is docker; using postgres:${server_major} client (local pg_dump ${local_major:-unknown}, server ${server_major})."
+      clone_from_source_docker "${server_major}" "${local_major:-unknown}"
       ;;
     auto)
       if [[ -n "${server_major}" && "${local_major:-unknown}" != "${server_major}" ]]; then
         log "Local pg_dump ${local_major:-unknown} does not match server ${server_major}; using Docker postgres:${server_major} client."
-        clone_from_source_docker "${server_major}"
+        clone_from_source_docker "${server_major}" "${local_major:-unknown}"
       else
+        log "Clone strategy auto resolved to local client (server ${server_major:-unknown}, local pg_dump ${local_major:-unknown})."
         clone_from_source_local
       fi
       ;;
@@ -249,6 +282,7 @@ clone_from_source() {
 # ---------------------------------------------------------------------------
 
 drop_preview_db() {
+  log "Cleaning up preview DB ${PREVIEW_DB}."
   psql_admin -v branch_name="${BRANCH_NAME}" -v preview_db="${PREVIEW_DB}" <<'SQL'
 SELECT pg_advisory_lock(hashtext(:'branch_name'));
 SELECT EXISTS(SELECT 1 FROM pg_database WHERE datname = :'preview_db') AS preview_exists \gset
@@ -298,6 +332,8 @@ BEGIN
 END
 \$\$;
 SQL
+  else
+    log "APP_DB_USER not provided. Skipping grant step."
   fi
 }
 
@@ -308,6 +344,7 @@ SQL
 cmd_create() {
   require_env PARENT_BRANCH
   validate_identifier "${PARENT_BRANCH}" PARENT_BRANCH
+  log "Create requested: preview=${PREVIEW_DB} parent=${PARENT_BRANCH}."
 
   local setup_output
   setup_output="$(
@@ -360,6 +397,7 @@ SQL
 }
 
 cmd_delete() {
+  log "Delete requested: preview=${PREVIEW_DB}."
   psql_admin -v branch_name="${BRANCH_NAME}" -v preview_db="${PREVIEW_DB}" <<'SQL'
 SELECT pg_advisory_lock(hashtext(:'branch_name'));
 
@@ -383,6 +421,7 @@ SQL
 cmd_reset() {
   require_env PARENT_BRANCH
   validate_identifier "${PARENT_BRANCH}" PARENT_BRANCH
+  log "Reset requested: preview=${PREVIEW_DB} parent=${PARENT_BRANCH}."
 
   local setup_output
   setup_output="$(
@@ -456,11 +495,16 @@ main() {
 
   LABEL="${command}-branch"
   trap release_branch_lock EXIT
+  log "Starting command '${command}' for branch ${BRANCH_NAME} (lock_strategy=${LOCK_STRATEGY:-advisory}, lock_timeout=${LOCK_WAIT_TIMEOUT_SEC:-300}s, clone_strategy=${CLONE_STRATEGY:-auto})."
 
   case "$command" in
-    create) acquire_branch_lock; cmd_create ;;
-    delete) acquire_branch_lock; cmd_delete ;;
-    reset)  acquire_branch_lock; cmd_reset  ;;
+    create)
+      acquire_branch_lock "$command"
+      [[ "${CREATE_LOCK_TIMEOUT_NOOP}" == "1" ]] && return 0
+      cmd_create
+      ;;
+    delete) acquire_branch_lock "$command"; cmd_delete ;;
+    reset)  acquire_branch_lock "$command"; cmd_reset  ;;
     *)      die "Invalid command '${command}'. Use create, delete, or reset." ;;
   esac
 }

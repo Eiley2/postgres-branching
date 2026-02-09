@@ -42,6 +42,7 @@ All operations:
 
 - Are **serialized per `branch_name`** using a PostgreSQL advisory lock held for the full command lifecycle.
 - If another operation already holds the lock for the same `branch_name`, the command waits up to `LOCK_WAIT_TIMEOUT_SEC` (default `300` seconds) and then fails.
+- `create` has a retry-safe fallback: if lock wait times out but the preview DB already exists, it exits as a successful no-op.
 - On clone failure (`create`/`reset`), the incomplete preview database is automatically cleaned up.
 - When `app_db_user` is set (`create`/`reset`), the action grants `CONNECT`, schema `USAGE`, and full privileges on all tables and sequences -- including `ALTER DEFAULT PRIVILEGES` so future objects are also accessible.
 
