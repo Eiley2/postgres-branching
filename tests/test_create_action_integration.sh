@@ -42,6 +42,31 @@ table_fingerprint() {
     -Atqc "SELECT md5(COALESCE(string_agg(t::text, '|' ORDER BY t::text), '')) FROM (SELECT * FROM ${table}) t;"
 }
 
+assert_no_branch_lock_holder() {
+  local context="$1"
+  local holder_count
+  holder_count="$(
+    psql_admin -Atqc "SELECT count(*) FROM pg_locks l
+      JOIN pg_stat_activity a ON a.pid = l.pid
+      WHERE l.locktype = 'advisory'
+        AND l.classid = 20461
+        AND l.objid = hashtext('${BRANCH_NAME}')
+        AND l.granted
+        AND a.query = 'SELECT pg_sleep(86400);';"
+  )"
+  if [[ "${holder_count}" != "0" ]]; then
+    printf 'FAIL: stale lock holder detected (%s)\n' "${context}" >&2
+    psql_admin -Atqc "SELECT a.pid, a.application_name, now() - a.query_start AS age, a.query
+      FROM pg_locks l
+      JOIN pg_stat_activity a ON a.pid = l.pid
+      WHERE l.locktype = 'advisory'
+        AND l.classid = 20461
+        AND l.objid = hashtext('${BRANCH_NAME}')
+        AND l.granted;" >&2
+    exit 1
+  fi
+}
+
 run_preview_branch_tests() {
   local db="$1"
   local users
@@ -117,6 +142,7 @@ main() {
   "${SCRIPT_PATH}" create
   wait "${PARENT_CONN_PID_1}" || true
   wait "${PARENT_CONN_PID_2}" || true
+  assert_no_branch_lock_holder "after first create"
 
   log_step "Validating preview DB exists"
   exists="$(psql_admin -Atqc "SELECT EXISTS(SELECT 1 FROM pg_database WHERE datname = '${PREVIEW_DB}');")"
@@ -138,6 +164,29 @@ main() {
     printf 'FAIL: data mismatch between source and preview replica\n' >&2
     exit 1
   fi
+
+  log_step "Step 6: executing create action again on existing preview DB (idempotency + lock cleanup check)"
+  second_create_output="$(
+    BRANCH_NAME="${BRANCH_NAME}" \
+    PARENT_BRANCH="${PARENT_BRANCH}" \
+    PGHOST="${PGHOST}" \
+    PGPORT="${PGPORT}" \
+    PGUSER="${PGUSER}" \
+    PGPASSWORD="${PGPASSWORD}" \
+    PGDATABASE="${PGDATABASE:-postgres}" \
+    LOCK_WAIT_TIMEOUT_SEC="30" \
+    "${SCRIPT_PATH}" create 2>&1
+  )"
+  printf '%s\n' "${second_create_output}"
+  if ! grep -q "Preview DB already exists. No-op." <<<"${second_create_output}"; then
+    printf 'FAIL: second create should be a no-op when preview DB already exists\n' >&2
+    exit 1
+  fi
+  if grep -q "Timed out waiting for operation lock" <<<"${second_create_output}"; then
+    printf 'FAIL: second create should not time out waiting for lock\n' >&2
+    exit 1
+  fi
+  assert_no_branch_lock_holder "after second create"
 
   echo "PASS: create action integration test"
 }

@@ -41,7 +41,9 @@ This creates a preview database named `app_pr_<number>` cloned from `app_main`. 
 All operations:
 
 - Are **serialized per `branch_name`** using a PostgreSQL advisory lock held for the full command lifecycle.
-- If another operation already holds the lock for the same `branch_name`, the command waits up to `LOCK_WAIT_TIMEOUT_SEC` (default `300` seconds) and then fails.
+- If another operation already holds the lock for the same `branch_name`, the command waits up to `LOCK_WAIT_TIMEOUT_SEC` (default `180` seconds) and then fails.
+- Lock-holder connections use aggressive TCP keepalive settings so abandoned runner sessions are detected and dropped faster.
+- On lock timeout, the action can auto-clean stale lock-holder sessions older than `LOCK_STALE_AFTER_SEC` (default `1800` seconds) and retry once.
 - `create` has a retry-safe fallback: if lock wait times out but the preview DB already exists, it exits as a successful no-op.
 - On clone failure (`create`/`reset`), the incomplete preview database is automatically cleaned up.
 - When `app_db_user` is set (`create`/`reset`), the action grants `CONNECT`, schema `USAGE`, and full privileges on all tables and sequences -- including `ALTER DEFAULT PRIVILEGES` so future objects are also accessible.
@@ -164,6 +166,18 @@ Docker clone mode automatically:
 - Propagates common `PG*` connection and SSL environment variables (`PGSSLMODE`, `PGSSLROOTCERT`, `PGSSLCERT`, `PGSSLKEY`, etc.).
 - Mounts SSL certificate and key files as read-only volumes.
 - Rewrites `localhost`/`127.0.0.1` to `host.docker.internal` so the container can reach the host network.
+
+---
+
+## Lock tuning (optional env vars)
+
+These can be set as step/job `env` values when needed:
+
+- `LOCK_WAIT_TIMEOUT_SEC` (default `180`): how long to wait for advisory lock acquisition.
+- `LOCK_STALE_AFTER_SEC` (default `1800`): minimum lock-holder age before stale auto-cleanup is allowed on timeout.
+- `LOCK_TCP_KEEPALIVES_IDLE_SEC` (default `30`): lock-holder TCP keepalive idle.
+- `LOCK_TCP_KEEPALIVES_INTERVAL_SEC` (default `10`): lock-holder TCP keepalive interval.
+- `LOCK_TCP_KEEPALIVES_COUNT` (default `3`): lock-holder TCP keepalive probe count.
 
 ---
 

@@ -7,6 +7,7 @@ set -euo pipefail
 
 LABEL="preview-branch"
 LOCK_NAMESPACE=20461
+LOCK_HOLDER_APP_NAME="postgres-branching-lock-holder"
 LOCK_HOLDER_PID=""
 LOCK_READY_FILE=""
 LOCK_LOG_FILE=""
@@ -87,6 +88,45 @@ cleanup_lock_resources() {
   LOCK_LOG_FILE=""
 }
 
+terminate_stale_branch_locks() {
+  local stale_after="${LOCK_STALE_AFTER_SEC:-1800}"
+  [[ "${stale_after}" =~ ^[0-9]+$ ]] || die "LOCK_STALE_AFTER_SEC must be an integer (seconds)."
+
+  local stale_rows=""
+  stale_rows="$(
+    psql_admin -t -A -F $'\t' \
+      -v branch_name="${BRANCH_NAME}" \
+      -v lock_namespace="${LOCK_NAMESPACE}" \
+      -v stale_after="${stale_after}" <<'SQL'
+SELECT a.pid, a.application_name, EXTRACT(EPOCH FROM (now() - a.query_start))::bigint AS age_sec
+FROM pg_locks l
+JOIN pg_stat_activity a ON a.pid = l.pid
+WHERE l.locktype = 'advisory'
+  AND l.classid = :lock_namespace
+  AND l.objid = hashtext(:'branch_name')
+  AND l.granted
+  AND a.pid <> pg_backend_pid()
+  AND a.query = 'SELECT pg_sleep(86400);'
+  AND EXTRACT(EPOCH FROM (now() - a.query_start)) >= :stale_after;
+SQL
+  )"
+
+  local cleaned=0
+  local pid app_name age_sec
+  while IFS=$'\t' read -r pid app_name age_sec; do
+    [[ -n "${pid}" ]] || continue
+    [[ "${pid}" =~ ^[0-9]+$ ]] || continue
+    log "Terminating stale lock holder pid=${pid} app=${app_name:-unknown} age=${age_sec:-unknown}s for ${BRANCH_NAME}."
+    psql_admin -v pid="${pid}" -c "SELECT pg_terminate_backend(:'pid'::int);" >/dev/null
+    cleaned=1
+  done <<<"${stale_rows}"
+
+  if [[ "${cleaned}" == "1" ]]; then
+    return 0
+  fi
+  return 1
+}
+
 release_branch_lock() {
   if [[ -n "${LOCK_HOLDER_PID:-}" ]]; then
     kill "${LOCK_HOLDER_PID}" >/dev/null 2>&1 || true
@@ -98,19 +138,34 @@ release_branch_lock() {
 
 acquire_branch_lock() {
   local command="${1:-}"
+  local retried_after_cleanup="${2:-0}"
   local lock_strategy="${LOCK_STRATEGY:-advisory}"
   if [[ "${lock_strategy}" != "advisory" ]]; then
     log "Operation lock disabled (LOCK_STRATEGY=${lock_strategy})."
     return 0
   fi
 
-  local timeout="${LOCK_WAIT_TIMEOUT_SEC:-300}"
+  local timeout="${LOCK_WAIT_TIMEOUT_SEC:-180}"
+  local keepalive_idle="${LOCK_TCP_KEEPALIVES_IDLE_SEC:-30}"
+  local keepalive_interval="${LOCK_TCP_KEEPALIVES_INTERVAL_SEC:-10}"
+  local keepalive_count="${LOCK_TCP_KEEPALIVES_COUNT:-3}"
+  local holder_pgoptions="${PGOPTIONS:-}"
   [[ "${timeout}" =~ ^[0-9]+$ ]] || die "LOCK_WAIT_TIMEOUT_SEC must be an integer (seconds)."
+  [[ "${keepalive_idle}" =~ ^[0-9]+$ ]] || die "LOCK_TCP_KEEPALIVES_IDLE_SEC must be an integer (seconds)."
+  [[ "${keepalive_interval}" =~ ^[0-9]+$ ]] || die "LOCK_TCP_KEEPALIVES_INTERVAL_SEC must be an integer (seconds)."
+  [[ "${keepalive_count}" =~ ^[0-9]+$ ]] || die "LOCK_TCP_KEEPALIVES_COUNT must be an integer."
   log "Waiting for operation lock on ${BRANCH_NAME} (timeout=${timeout}s)."
+
+  if [[ -n "${holder_pgoptions}" ]]; then
+    holder_pgoptions="${holder_pgoptions} "
+  fi
+  holder_pgoptions="${holder_pgoptions}-c tcp_keepalives_idle=${keepalive_idle} -c tcp_keepalives_interval=${keepalive_interval} -c tcp_keepalives_count=${keepalive_count}"
 
   LOCK_READY_FILE="$(mktemp)"
   LOCK_LOG_FILE="$(mktemp)"
 
+  PGAPPNAME="${LOCK_HOLDER_APP_NAME}" \
+  PGOPTIONS="${holder_pgoptions}" \
   PGPASSWORD="${PGPASSWORD}" psql \
     -v ON_ERROR_STOP=1 -X -q \
     -h "${PGHOST}" -p "${PGPORT}" -U "${PGUSER}" \
@@ -142,6 +197,11 @@ SQL
     fi
     if (( waited >= timeout )); then
       release_branch_lock
+      if [[ "${retried_after_cleanup}" == "0" ]] && terminate_stale_branch_locks; then
+        log "Retrying operation lock acquisition after stale-lock cleanup for ${BRANCH_NAME}."
+        acquire_branch_lock "${command}" "1"
+        return 0
+      fi
       if [[ "${command}" == "create" ]] && preview_db_exists; then
         CREATE_LOCK_TIMEOUT_NOOP=1
         log "Operation lock wait timed out after ${timeout}s, but preview DB already exists. Treating create as no-op."
@@ -495,7 +555,7 @@ main() {
 
   LABEL="${command}-branch"
   trap release_branch_lock EXIT
-  log "Starting command '${command}' for branch ${BRANCH_NAME} (lock_strategy=${LOCK_STRATEGY:-advisory}, lock_timeout=${LOCK_WAIT_TIMEOUT_SEC:-300}s, clone_strategy=${CLONE_STRATEGY:-auto})."
+  log "Starting command '${command}' for branch ${BRANCH_NAME} (lock_strategy=${LOCK_STRATEGY:-advisory}, lock_timeout=${LOCK_WAIT_TIMEOUT_SEC:-180}s, clone_strategy=${CLONE_STRATEGY:-auto})."
 
   case "$command" in
     create)
