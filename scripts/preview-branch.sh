@@ -89,13 +89,16 @@ acquire_branch_lock() {
   LOCK_READY_FILE="$(mktemp)"
   LOCK_LOG_FILE="$(mktemp)"
 
-  psql_admin \
+  PGPASSWORD="${PGPASSWORD}" psql \
+    -v ON_ERROR_STOP=1 -X -q \
+    -h "${PGHOST}" -p "${PGPORT}" -U "${PGUSER}" \
+    -d "${PGDATABASE:-postgres}" \
     -v branch_name="${BRANCH_NAME}" \
     -v lock_namespace="${LOCK_NAMESPACE}" \
     -v ready_file="${LOCK_READY_FILE}" <<'SQL' >"${LOCK_LOG_FILE}" 2>&1 &
 SELECT pg_advisory_lock(:lock_namespace, hashtext(:'branch_name'));
 \o :ready_file
-\echo LOCK_ACQUIRED
+\qecho LOCK_ACQUIRED
 \o
 SELECT pg_sleep(86400);
 SQL
