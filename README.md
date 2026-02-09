@@ -1,5 +1,7 @@
 # Postgres Branching
 
+> Vibecoded with GPT 5.3-Codex (High).
+
 ![CI](https://github.com/Eiley2/postgres-branching/actions/workflows/ci.yml/badge.svg)
 ![Compatibility](https://github.com/Eiley2/postgres-branching/actions/workflows/compatibility.yml/badge.svg?branch=main&event=push)
 ![MIT License](https://img.shields.io/badge/license-MIT-green.svg)
