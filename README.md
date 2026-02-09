@@ -8,6 +8,8 @@
 
 GitHub Action toolkit to **create**, **reset**, and **delete** preview databases inside the same PostgreSQL instance -- similar to git branching but for databases.
 
+Inspired by [Neon](https://neon.tech)'s database branching, but **vendor-agnostic**: works with any standard PostgreSQL instance (self-hosted, RDS, Cloud SQL, Supabase, etc.) so you get branch-per-PR workflows without being locked into a specific provider.
+
 ---
 
 ## Quick start
