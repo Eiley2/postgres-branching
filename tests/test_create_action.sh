@@ -240,6 +240,7 @@ test_missing_env_fails_before_psql() {
   set +e
   PATH="${MOCK_BIN_DIR}:${PATH}" \
   MOCK_COUNT_FILE="$MOCK_COUNT_FILE" \
+  MOCK_COUNT_LOCK_FILE="$MOCK_COUNT_LOCK_FILE" \
   MOCK_SQL_DIR="$MOCK_SQL_DIR" \
   MOCK_LOG_DIR="$MOCK_LOG_DIR" \
   LOCK_STRATEGY="none" \

@@ -131,6 +131,7 @@ cleanup() {
   if [[ -n "${STALE_LOCK_PID}" ]]; then
     kill "${STALE_LOCK_PID}" >/dev/null 2>&1 || true
   fi
+  psql_admin -c "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE application_name = 'postgres-branching-lock-holder' AND pid <> pg_backend_pid();" >/dev/null 2>&1
   psql_admin -c "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname IN ('${PARENT_BRANCH}','${PREVIEW_DB}') AND pid <> pg_backend_pid();" >/dev/null 2>&1
   psql_admin -c "DROP DATABASE IF EXISTS \"${PREVIEW_DB}\";" >/dev/null 2>&1
   psql_admin -c "DROP DATABASE IF EXISTS \"${PARENT_BRANCH}\";" >/dev/null 2>&1
