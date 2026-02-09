@@ -1,0 +1,41 @@
+name: Update Major Tag
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: write
+
+jobs:
+  move-v1:
+    if: startsWith(github.event.release.tag_name, 'v1.')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Move v1 tag to latest v1.x.y release
+        env:
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+        run: |
+          set -euo pipefail
+
+          if ! [[ "${RELEASE_TAG}" =~ ^v1\.[0-9]+\.[0-9]+$ ]]; then
+            echo "Tag ${RELEASE_TAG} is not a stable v1.x.y release. Skipping."
+            exit 0
+          fi
+
+          git fetch --force --tags origin
+          target_sha="$(git rev-list -n 1 "${RELEASE_TAG}")"
+
+          if [[ -z "${target_sha}" ]]; then
+            echo "Could not resolve ${RELEASE_TAG}."
+            exit 1
+          fi
+
+          git tag -f v1 "${target_sha}"
+          git push origin refs/tags/v1 --force
+
