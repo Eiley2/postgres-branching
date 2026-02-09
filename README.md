@@ -42,6 +42,21 @@ Extra inputs for `create` and `reset`:
 - `app_db_user` (optional, grants DB + schema/table/sequence privileges on the preview DB)
 - `clone_strategy` (optional, default `auto`): `auto` picks local vs Docker by version compatibility, `local` forces local `pg_dump`/`pg_restore`, `docker` forces Docker client cloning.
 
+## `with` field reference
+
+Use this as a quick guide for what each `with` field does in workflow YAML.
+
+- `command`: Operation to run in `Eiley2/postgres-branching@v1` (`create`, `reset`, `delete`).
+- `branch_name`: Name of the preview database to create/reset/delete (for all actions).
+- `parent_branch`: Source database used to clone data from (required for `create` and `reset`).
+- `pg_host`: PostgreSQL host address (required for all actions).
+- `pg_port`: PostgreSQL port (required for all actions).
+- `pg_user`: PostgreSQL admin user used by the action (required for all actions).
+- `pg_password`: Password for `pg_user` (required for all actions).
+- `pg_database`: Administrative database where control statements run (optional, default `postgres`).
+- `app_db_user`: Optional app role to grant access on the preview DB after `create`/`reset`.
+- `clone_strategy`: Clone method for `create`/`reset` (`auto`, `local`, `docker`).
+
 ## Usage
 
 ### Single action + command
