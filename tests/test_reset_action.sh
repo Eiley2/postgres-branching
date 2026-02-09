@@ -18,7 +18,7 @@ setup_mocks() {
   printf '0\n' > "$MOCK_COUNT_FILE"
   MOCK_PSQL_STDOUT=""
 
-  cat > "$MOCK_BIN_DIR/psql" <<'PSQL'
+cat > "$MOCK_BIN_DIR/psql" <<'PSQL'
 #!/usr/bin/env bash
 set -euo pipefail
 count_file="${MOCK_COUNT_FILE:?}"
@@ -27,7 +27,19 @@ count="$(cat "$count_file")"
 count=$((count + 1))
 printf '%s\n' "$count" > "$count_file"
 out="${sql_dir}/call_${count}.sql"
-cat > "$out"
+args=("$@")
+sql_flag=""
+for ((i=0;i<${#args[@]};i++)); do
+  if [[ "${args[$i]}" == "-c" ]] && (( i + 1 < ${#args[@]} )); then
+    sql_flag="${args[$((i + 1))]}"
+    break
+  fi
+done
+if [[ -n "$sql_flag" ]]; then
+  printf '%s\n' "$sql_flag" > "$out"
+else
+  cat > "$out"
+fi
 if [[ -n "${MOCK_PSQL_STDOUT:-}" ]]; then
   printf '%s\n' "$MOCK_PSQL_STDOUT"
 fi
@@ -70,6 +82,7 @@ run_script() {
   MOCK_PG_DUMP_VERSION="${MOCK_PG_DUMP_VERSION:-}" \
   CLONE_STRATEGY="${CLONE_STRATEGY:-auto}" \
   LOCK_STRATEGY="${LOCK_STRATEGY:-none}" \
+  APP_DB_USER="${APP_DB_USER:-}" \
   BRANCH_NAME="geopark_preview" PARENT_BRANCH="geopark" PGHOST="localhost" PGPORT="5432" PGUSER="postgres" PGPASSWORD="postgres" \
   "$SCRIPT_PATH" reset >/dev/null 2>&1
 }
@@ -108,6 +121,17 @@ test_reset_honors_local_clone_strategy() {
   assert_not_exists "${MOCK_LOG_DIR}/docker.args" "local strategy should not use docker"
 }
 
+test_reset_grants_app_user_access() {
+  setup_mocks
+  MOCK_PSQL_STDOUT=$'SERVER_VERSION_NUM=180001\nPREVIEW_RESET=1'
+  APP_DB_USER="preview_user"
+  run_script
+  assert_eq "3" "$(cat "$MOCK_COUNT_FILE")" "grant flow should add two psql calls"
+  assert_contains "GRANT ALL PRIVILEGES ON DATABASE" "${MOCK_SQL_DIR}/call_2.sql" "should grant database privileges"
+  assert_contains "GRANT USAGE ON SCHEMA" "${MOCK_SQL_DIR}/call_3.sql" "should grant schema usage"
+  assert_contains "ALTER DEFAULT PRIVILEGES" "${MOCK_SQL_DIR}/call_3.sql" "should grant default privileges"
+}
+
 test_missing_env_fails_before_psql() {
   setup_mocks
   set +e
@@ -128,6 +152,7 @@ main() {
   test_reset_recreates_and_restores_local
   test_reset_uses_docker_on_major_mismatch
   test_reset_honors_local_clone_strategy
+  test_reset_grants_app_user_access
   test_missing_env_fails_before_psql
   echo "PASS: reset action tests"
 }

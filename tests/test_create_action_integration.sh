@@ -135,6 +135,7 @@ cleanup() {
   psql_admin -c "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname IN ('${PARENT_BRANCH}','${PREVIEW_DB}') AND pid <> pg_backend_pid();" >/dev/null 2>&1
   psql_admin -c "DROP DATABASE IF EXISTS \"${PREVIEW_DB}\";" >/dev/null 2>&1
   psql_admin -c "DROP DATABASE IF EXISTS \"${PARENT_BRANCH}\";" >/dev/null 2>&1
+  psql_admin -c "DROP ROLE IF EXISTS \"${APP_DB_USER}\";" >/dev/null 2>&1
 }
 
 start_parent_active_connections() {
@@ -154,9 +155,14 @@ main() {
   PARENT_BRANCH="create_parent_ci"
   BRANCH_NAME="create_preview_ci"
   PREVIEW_DB="${BRANCH_NAME}"
+  APP_DB_USER="preview_app_user_ci_create"
+  APP_DB_USER_PASSWORD="preview_app_user_ci_create_pw"
 
   trap cleanup EXIT
   cleanup
+
+  log_step "Step 0: creating app role for grant validation"
+  psql_admin -c "CREATE ROLE \"${APP_DB_USER}\" LOGIN PASSWORD '${APP_DB_USER_PASSWORD}';"
 
   log_step "Step 1: creating source DB"
   psql_admin -c "CREATE DATABASE \"${PARENT_BRANCH}\";"
@@ -179,6 +185,7 @@ main() {
   log_step "Step 4: executing create action against parent branch with active connections"
   BRANCH_NAME="${BRANCH_NAME}" \
   PARENT_BRANCH="${PARENT_BRANCH}" \
+  APP_DB_USER="${APP_DB_USER}" \
   PGHOST="${PGHOST}" \
   PGPORT="${PGPORT}" \
   PGUSER="${PGUSER}" \
@@ -210,10 +217,34 @@ main() {
     exit 1
   fi
 
+  log_step "Step 5b: validating APP_DB_USER grants and default privileges after create"
+  preview_users_as_app="$(
+    PGPASSWORD="${APP_DB_USER_PASSWORD}" psql -v ON_ERROR_STOP=1 -X -h "${PGHOST}" -p "${PGPORT}" -U "${APP_DB_USER}" -d "${PREVIEW_DB}" -Atqc "SELECT count(*) FROM ci_users;"
+  )"
+  if [[ "${preview_users_as_app}" != "2" ]]; then
+    printf 'FAIL: app user should be able to read preview data (users=%s)\n' "${preview_users_as_app}" >&2
+    exit 1
+  fi
+  PGPASSWORD="${APP_DB_USER_PASSWORD}" psql -v ON_ERROR_STOP=1 -X -h "${PGHOST}" -p "${PGPORT}" -U "${APP_DB_USER}" -d "${PREVIEW_DB}" \
+    -c "INSERT INTO ci_users (id, email) VALUES (100, 'grant-create@example.com');"
+  PGPASSWORD="${PGPASSWORD}" psql -v ON_ERROR_STOP=1 -X -h "${PGHOST}" -p "${PGPORT}" -U "${PGUSER}" -d "${PREVIEW_DB}" \
+    -c "
+      DROP TABLE IF EXISTS ci_grant_default_create;
+      DROP SEQUENCE IF EXISTS ci_grant_default_create_seq;
+      CREATE TABLE ci_grant_default_create (id integer primary key, note text not null);
+      CREATE SEQUENCE ci_grant_default_create_seq START 1;
+    "
+  PGPASSWORD="${APP_DB_USER_PASSWORD}" psql -v ON_ERROR_STOP=1 -X -h "${PGHOST}" -p "${PGPORT}" -U "${APP_DB_USER}" -d "${PREVIEW_DB}" \
+    -c "
+      INSERT INTO ci_grant_default_create (id, note) VALUES (1, 'ok');
+      SELECT nextval('ci_grant_default_create_seq');
+    " >/dev/null
+
   log_step "Step 6: executing create action again on existing preview DB (idempotency + lock cleanup check)"
   second_create_output="$(
     BRANCH_NAME="${BRANCH_NAME}" \
     PARENT_BRANCH="${PARENT_BRANCH}" \
+    APP_DB_USER="${APP_DB_USER}" \
     PGHOST="${PGHOST}" \
     PGPORT="${PGPORT}" \
     PGUSER="${PGUSER}" \
@@ -238,6 +269,7 @@ main() {
   recovery_output="$(
     BRANCH_NAME="${BRANCH_NAME}" \
     PARENT_BRANCH="${PARENT_BRANCH}" \
+    APP_DB_USER="${APP_DB_USER}" \
     PGHOST="${PGHOST}" \
     PGPORT="${PGPORT}" \
     PGUSER="${PGUSER}" \
