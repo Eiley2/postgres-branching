@@ -40,7 +40,10 @@ Extra inputs for `create` and `reset`:
 
 - `parent_branch` (required)
 - `app_db_user` (optional, grants DB + schema/table/sequence privileges on the preview DB)
-- `clone_strategy` (optional, default `auto`): `auto` picks local vs Docker by version compatibility, `local` forces local `pg_dump`/`pg_restore`, `docker` forces Docker client cloning.
+- `clone_strategy` (optional, default `auto`): controls how clone is performed in `create`/`reset`.
+  `auto` (recommended) uses local tools when compatible and falls back to Docker on client/server version mismatch; `local` forces local `pg_dump`/`pg_restore`; `docker` forces Docker client cloning.
+  Use `local` when runner tooling is already managed, and `docker` for consistent client behavior across runners.
+  If Docker is required (`auto` fallback or explicit `docker`) and Docker is unavailable, the action fails with a clear error.
 
 ## `with` field reference
 
