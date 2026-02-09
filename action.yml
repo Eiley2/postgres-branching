@@ -1,5 +1,8 @@
 name: "Postgres Branching"
 description: "Create, delete, or reset preview databases inside the same PostgreSQL instance"
+branding:
+  icon: "database"
+  color: "black"
 
 inputs:
   command:
