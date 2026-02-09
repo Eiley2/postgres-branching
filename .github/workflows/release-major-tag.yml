@@ -1,4 +1,4 @@
-name: Update Major Tag
+name: Update Release Aliases
 
 on:
   release:
@@ -8,8 +8,7 @@ permissions:
   contents: write
 
 jobs:
-  move-v1:
-    if: startsWith(github.event.release.tag_name, 'v1.')
+  update-aliases:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -17,14 +16,14 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Move v1 tag to latest v1.x.y release
+      - name: Move major and latest aliases for stable releases
         env:
           RELEASE_TAG: ${{ github.event.release.tag_name }}
         run: |
           set -euo pipefail
 
-          if ! [[ "${RELEASE_TAG}" =~ ^v1\.[0-9]+\.[0-9]+$ ]]; then
-            echo "Tag ${RELEASE_TAG} is not a stable v1.x.y release. Skipping."
+          if ! [[ "${RELEASE_TAG}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "Tag ${RELEASE_TAG} is not a stable semver release. Skipping aliases."
             exit 0
           fi
 
@@ -36,6 +35,10 @@ jobs:
             exit 1
           fi
 
-          git tag -f v1 "${target_sha}"
-          git push origin refs/tags/v1 --force
+          major_alias="$(printf '%s' "${RELEASE_TAG}" | cut -d. -f1)"
 
+          git tag -f "${major_alias}" "${target_sha}"
+          git tag -f latest "${target_sha}"
+
+          git push origin "refs/tags/${major_alias}" --force
+          git push origin refs/tags/latest --force
