@@ -32,6 +32,7 @@ run_script() {
   PATH="${MOCK_BIN_DIR}:${PATH}" \
   MOCK_COUNT_FILE="$MOCK_COUNT_FILE" \
   MOCK_SQL_DIR="$MOCK_SQL_DIR" \
+  LOCK_STRATEGY="${LOCK_STRATEGY:-none}" \
   BRANCH_NAME="geopark_preview" PGHOST="localhost" PGPORT="5432" PGUSER="postgres" PGPASSWORD="postgres" \
   "$SCRIPT_PATH" delete >/dev/null 2>&1
 }
@@ -52,6 +53,7 @@ test_missing_env_fails_before_psql() {
   PATH="${MOCK_BIN_DIR}:${PATH}" \
   MOCK_COUNT_FILE="$MOCK_COUNT_FILE" \
   MOCK_SQL_DIR="$MOCK_SQL_DIR" \
+  LOCK_STRATEGY="none" \
   PGHOST="localhost" PGPORT="5432" PGUSER="postgres" PGPASSWORD="postgres" \
   "$SCRIPT_PATH" delete >/dev/null 2>&1
   code="$?"

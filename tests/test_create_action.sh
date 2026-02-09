@@ -100,6 +100,8 @@ run_script() {
   MOCK_LOG_DIR="$MOCK_LOG_DIR" \
   MOCK_PSQL_STDOUT="${MOCK_PSQL_STDOUT:-}" \
   MOCK_PG_DUMP_VERSION="${MOCK_PG_DUMP_VERSION:-}" \
+  CLONE_STRATEGY="${CLONE_STRATEGY:-auto}" \
+  LOCK_STRATEGY="${LOCK_STRATEGY:-none}" \
   BRANCH_NAME="geopark_preview" \
   PARENT_BRANCH="geopark" \
   PGHOST="localhost" \
@@ -133,6 +135,16 @@ test_create_uses_docker_on_major_mismatch() {
   assert_not_exists "${MOCK_LOG_DIR}/pg_restore.args" "mismatch should skip local restore"
 }
 
+test_create_honors_local_clone_strategy() {
+  setup_mocks
+  MOCK_PSQL_STDOUT=$'SERVER_VERSION_NUM=160010\nPREVIEW_CREATED=1'
+  CLONE_STRATEGY="local"
+  run_script
+  assert_contains "-d geopark" "${MOCK_LOG_DIR}/pg_dump.args" "local strategy should run pg_dump"
+  assert_contains "-d geopark_preview" "${MOCK_LOG_DIR}/pg_restore.args" "local strategy should run pg_restore"
+  assert_not_exists "${MOCK_LOG_DIR}/docker.args" "local strategy should not use docker"
+}
+
 test_create_is_noop_when_exists() {
   setup_mocks
   MOCK_PSQL_STDOUT=$'SERVER_VERSION_NUM=180001\nALREADY_EXISTS=1'
@@ -150,6 +162,7 @@ test_missing_env_fails_before_psql() {
   MOCK_COUNT_FILE="$MOCK_COUNT_FILE" \
   MOCK_SQL_DIR="$MOCK_SQL_DIR" \
   MOCK_LOG_DIR="$MOCK_LOG_DIR" \
+  LOCK_STRATEGY="none" \
   PARENT_BRANCH="geopark" PGHOST="localhost" PGPORT="5432" PGUSER="postgres" PGPASSWORD="postgres" \
   "$SCRIPT_PATH" create >/dev/null 2>&1
   code="$?"
@@ -161,6 +174,7 @@ test_missing_env_fails_before_psql() {
 main() {
   test_create_runs_local_clone_when_major_matches
   test_create_uses_docker_on_major_mismatch
+  test_create_honors_local_clone_strategy
   test_create_is_noop_when_exists
   test_missing_env_fails_before_psql
   echo "PASS: create action tests"
